@@ -84,7 +84,7 @@ pip install -r requirements.txt
 ## 5️⃣ Ejecutar el proyecto
 
 ```bash
-python examen_u2_final.py
+python MD EU2.py
 ```
 
 ---
