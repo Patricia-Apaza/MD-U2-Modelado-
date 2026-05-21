@@ -729,6 +729,21 @@ Se usa Regresión Logística como baseline más sofisticado.
 
     best_k_sil = list(K_range)[sil_list.index(max(sil_list))] if sil_list else K
     q = "buena ✓" if sil_km>0.5 else "moderada" if sil_km>0.25 else "débil ⚠"
+
+    # Generar perfiles dinámicos basados en los datos reales
+    col_ppal = num_cols[0] if num_cols else "variable principal"
+    perfiles_txt = ""
+    for i in perfil.index:
+        fila = perfil.loc[i]
+        top_col  = fila.idxmax()
+        low_col  = fila.idxmin()
+        top_val  = fila[top_col]
+        low_val  = fila[low_col]
+        n_reg    = cnt_km.get(int(i.split()[-1])-1, "?")
+        perfiles_txt += f"\n  {i} ({n_reg} registros)\n"
+        perfiles_txt += f"    Valor más alto  → {top_col}: {top_val:.2f}\n"
+        perfiles_txt += f"    Valor más bajo  → {low_col}: {low_val:.2f}\n"
+
     write(clust_interp, f"""INTERPRETACIÓN DE CLÚSTERES
 {'='*55}
 
@@ -739,23 +754,10 @@ K-means (K={K}):
 Clustering Jerárquico (Ward, K={K}):
   Silhouette = {sil_agg:.4f}
 
-PERFILES DE CLIENTES PROPUESTOS
+PERFILES REALES DE CADA CLÚSTER
 {'='*55}
-
-Ajusta estos perfiles según los valores reales del heatmap:
-
-  Clúster 1 — "Cliente Premium"
-    Valores altos en ingreso y saldo.
-    → Estrategia: fidelización, productos exclusivos.
-
-  Clúster 2 — "Cliente Ocasional"
-    Bajos niveles de interacción y productos.
-    → Estrategia: activación, ofertas de entrada.
-
-  Clúster 3 — "Cliente Recurrente"
-    Antigüedad alta, varios productos, ingreso medio.
-    → Estrategia: cross-selling y upgrades.
-
+(Basados en los valores medios del dataset cargado)
+{perfiles_txt}
 DIFERENCIA K-means vs Jerárquico
 {'='*55}
   K-means: rápido, requiere K previo, asume clústeres esféricos.
@@ -768,27 +770,46 @@ DIFERENCIA K-means vs Jerárquico
     log("→ Entrenando modelos de clasificación...")
     modelos = {
         "Baseline":          DummyClassifier(strategy="most_frequent", random_state=42),
-        "Reg. Logística":    LogisticRegression(solver="newton-cg", max_iter=300, random_state=42),
+        "Reg. Logística":    LogisticRegression(solver="lbfgs", max_iter=500, random_state=42),
         "KNN":               KNeighborsClassifier(n_neighbors=10),
         "Naive Bayes":       BernoulliNB(),
         "Árbol Decisión":    DecisionTreeClassifier(max_depth=5, random_state=42),
         "Random Forest":     RandomForestClassifier(n_estimators=100, random_state=42),
     }
+    # Detectar si es binario o multiclase
+    n_clases = len(y.unique())
+    es_multi  = n_clases > 2
+    avg       = "weighted" if es_multi else "binary"
+    log(f"  Clases detectadas: {n_clases} → modo {'multiclase' if es_multi else 'binario'}")
+
     resultados = {}
     for nombre, modelo in modelos.items():
         try:
             modelo.fit(X_train_sc, y_train)
-            yp   = modelo.predict_proba(X_test_sc)[:,1]
-            yhat = modelo.predict(X_test_sc)
+            yhat    = modelo.predict(X_test_sc)
+            yp_full = modelo.predict_proba(X_test_sc)   # shape (n, n_clases)
+
+            # AUC: para multiclase usar ovr+weighted; para binario usar col[:,1]
+            if es_multi:
+                auc_val = roc_auc_score(y_test, yp_full,
+                                        multi_class="ovr", average="weighted", labels=sorted(y_test.unique()))
+                yp_plot = yp_full   # guardar matriz completa para ROC
+            else:
+                auc_val = roc_auc_score(y_test, yp_full[:, 1])
+                yp_plot = yp_full[:, 1]
+
             resultados[nombre] = {
-                "modelo":  modelo, "y_pred": yhat, "y_proba": yp,
+                "modelo":   modelo,
+                "y_pred":   yhat,
+                "y_proba":  yp_plot,
+                "es_multi": es_multi,
                 "accuracy": accuracy_score(y_test, yhat),
-                "f1":       f1_score(y_test, yhat, zero_division=0),
-                "auc":      roc_auc_score(y_test, yp),
-                "precision":precision_score(y_test, yhat, zero_division=0),
-                "recall":   recall_score(y_test, yhat, zero_division=0),
+                "f1":       f1_score(y_test, yhat, average=avg, zero_division=0),
+                "auc":      auc_val,
+                "precision":precision_score(y_test, yhat, average=avg, zero_division=0),
+                "recall":   recall_score(y_test, yhat, average=avg, zero_division=0),
             }
-            log(f"  ✓ {nombre}")
+            log(f"  ✓ {nombre}  AUC={auc_val:.3f}")
         except Exception as ex:
             log(f"  ⚠ {nombre}: {ex}")
 
@@ -882,16 +903,38 @@ TABLA COMPARATIVA
 
     # ── Evaluación / ROC ──────────────────────────────────────────────────
     log("→ Generando curva ROC y tabla...")
+    from sklearn.preprocessing import label_binarize
+    clases_unicas = sorted(y.unique())
+
     fig_roc, ax_roc = plt.subplots(figsize=(8, 5))
     for i, (nm, v) in enumerate(resultados.items()):
-        fpr, tpr, _ = roc_curve(y_test, v["y_proba"])
-        ax_roc.plot(fpr, tpr,
-                    label=f"{nm} ({v['auc']:.3f})",
-                    color=PALETA[i%len(PALETA)], lw=2)
+        try:
+            if v["es_multi"]:
+                # Curva ROC macro para multiclase: promedio de cada clase vs resto
+                y_bin = label_binarize(y_test, classes=clases_unicas)
+                yp_m  = v["y_proba"]  # (n, n_clases)
+                tpr_all, fpr_all = [], []
+                for ci in range(len(clases_unicas)):
+                    fpr_c, tpr_c, _ = roc_curve(y_bin[:, ci], yp_m[:, ci])
+                    tpr_all.append(np.interp(np.linspace(0,1,100), fpr_c, tpr_c))
+                mean_tpr = np.mean(tpr_all, axis=0)
+                mean_fpr = np.linspace(0, 1, 100)
+                ax_roc.plot(mean_fpr, mean_tpr,
+                            label=f"{nm} (AUC={v['auc']:.3f})",
+                            color=PALETA[i%len(PALETA)], lw=2)
+            else:
+                fpr, tpr, _ = roc_curve(y_test, v["y_proba"])
+                ax_roc.plot(fpr, tpr,
+                            label=f"{nm} (AUC={v['auc']:.3f})",
+                            color=PALETA[i%len(PALETA)], lw=2)
+        except Exception as ex:
+            log(f"  ⚠ ROC {nm}: {ex}")
+
     ax_roc.plot([0,1],[0,1],"--", color="#B4B2A9", lw=1.5, label="Aleatorio (0.50)")
     ax_roc.set_xlabel("Tasa de Falsos Positivos (FPR)")
     ax_roc.set_ylabel("Tasa de Verdaderos Positivos (TPR)")
-    ax_roc.set_title("Curva ROC — Comparativa de modelos", fontweight="bold")
+    titulo_roc = "Curva ROC macro-promedio (multiclase)" if es_multi else "Curva ROC"
+    ax_roc.set_title(titulo_roc, fontweight="bold")
     ax_roc.legend(fontsize=8, loc="lower right")
     fig_roc.tight_layout()
     embed_fig(fig_roc_holder, fig_roc)
@@ -948,22 +991,34 @@ def render_matrix(model_name=None):
     v = state["resultados"].get(model_name)
     if v is None: return
 
-    cm = confusion_matrix(state["y_test"], v["y_pred"])
-    fig_cm, axes_cm = plt.subplots(1, 2, figsize=(10, 4))
+    cm        = confusion_matrix(state["y_test"], v["y_pred"])
+    es_multi  = v.get("es_multi", cm.shape[0] > 2)
+    clases_str= [str(c) for c in sorted(state["y"].unique())]
+    n_cls     = cm.shape[0]
+
+    ann_size = max(7, 14 - n_cls)
+    fig_w    = max(10, n_cls * 1.5 + 4)
+    fig_h    = max(4,  n_cls * 0.9 + 2)
+    fig_cm, axes_cm = plt.subplots(1, 2, figsize=(fig_w, fig_h))
     fig_cm.suptitle(f"Matriz de Confusión — {model_name}", fontweight="bold")
 
     sns.heatmap(cm, annot=True, fmt="d", ax=axes_cm[0],
-                cmap="Blues", linewidths=0.8,
-                xticklabels=["Pred. Neg","Pred. Pos"],
-                yticklabels=["Real Neg", "Real Pos"],
-                annot_kws={"size": 16, "weight": "bold"})
-    axes_cm[0].set_xlabel("Predicción"); axes_cm[0].set_ylabel("Valor Real")
+                cmap="Blues", linewidths=0.5,
+                xticklabels=clases_str,
+                yticklabels=clases_str,
+                annot_kws={"size": ann_size, "weight": "bold"})
+    axes_cm[0].set_xlabel("Predicción")
+    axes_cm[0].set_ylabel("Valor Real")
+    axes_cm[0].set_xticklabels(axes_cm[0].get_xticklabels(),
+                                rotation=30, ha="right", fontsize=8)
+    axes_cm[0].set_yticklabels(axes_cm[0].get_yticklabels(),
+                                rotation=0, fontsize=8)
 
-    metr_names = ["Accuracy","Precisión","Recall (Sensib.)","F1-Score","AUC"]
+    metr_names = ["Accuracy","Precisión (w)","Recall (w)","F1-Score (w)","AUC (OVR)"]
     metr_vals  = [v["accuracy"],v["precision"],v["recall"],v["f1"],v["auc"]]
     colors_bar = [PALETA[0],PALETA[1],PALETA[2],PALETA[3],PALETA[4]]
     axes_cm[1].barh(metr_names, metr_vals, color=colors_bar, edgecolor="white")
-    axes_cm[1].set_xlim(0, 1.15)
+    axes_cm[1].set_xlim(0, 1.2)
     axes_cm[1].set_title("Métricas del modelo")
     for i, val5 in enumerate(metr_vals):
         axes_cm[1].text(val5+0.02, i, f"{val5:.3f}", va="center", fontsize=10)
@@ -971,34 +1026,37 @@ def render_matrix(model_name=None):
     fig_cm.tight_layout()
     embed_fig(fig_cm_holder, fig_cm)
 
-    total = cm.sum()
-    if cm.shape == (2,2):
-        VN2,FP2,FN2,VP2 = cm.ravel()
-        acc  = (VP2+VN2)/total
-        prec = VP2/(VP2+FP2) if VP2+FP2 else 0
-        rec  = VP2/(VP2+FN2) if VP2+FN2 else 0
-        spec = VN2/(VN2+FP2) if VN2+FP2 else 0
-        f1v  = 2*prec*rec/(prec+rec) if prec+rec else 0
-        fnr  = FN2/(FN2+VP2) if FN2+VP2 else 0
-        npv  = VN2/(VN2+FN2) if VN2+FN2 else 0
+    # ── Métricas en el panel lateral ─────────────────────────────────────
+    for w in cm_metrics_frame.winfo_children(): w.destroy()
+    nota_multi = " (prom. weighted)" if es_multi else ""
 
-        for w in cm_metrics_frame.winfo_children(): w.destroy()
+    if not es_multi and n_cls == 2:
+        VN2,FP2,FN2,VP2 = cm.ravel()
+        total = cm.sum()
+        acc   = (VP2+VN2)/total
+        prec  = VP2/(VP2+FP2) if VP2+FP2 else 0
+        rec   = VP2/(VP2+FN2) if VP2+FN2 else 0
+        spec  = VN2/(VN2+FP2) if VN2+FP2 else 0
+        f1v   = 2*prec*rec/(prec+rec) if prec+rec else 0
+        fnr   = FN2/(FN2+VP2) if FN2+VP2 else 0
+        npv   = VN2/(VN2+FN2) if VN2+FN2 else 0
+
         data_cm = [
-            ("VP (Verdaderos Positivos)",  str(VP2), C_SUCCESS),
-            ("VN (Verdaderos Negativos)",  str(VN2), C_SUCCESS),
-            ("FP (Falsos Positivos)",      str(FP2), C_DANGER),
-            ("FN (Falsos Negativos)",      str(FN2), C_WARN),
+            ("VP (Verdaderos Positivos)", str(VP2), C_SUCCESS),
+            ("VN (Verdaderos Negativos)", str(VN2), C_SUCCESS),
+            ("FP (Falsos Positivos)",     str(FP2), C_DANGER),
+            ("FN (Falsos Negativos)",     str(FN2), C_WARN),
         ]
-        for nm, vl, cl in data_cm:
+        for nm2, vl2, cl2 in data_cm:
             f_row = tk.Frame(cm_metrics_frame, bg=C_WHITE)
             f_row.pack(fill="x", pady=1)
-            tk.Label(f_row, text=nm, font=F_BODY, bg=C_WHITE,
+            tk.Label(f_row, text=nm2, font=F_BODY, bg=C_WHITE,
                      fg=C_DARK, width=28, anchor="w").pack(side="left")
-            tk.Label(f_row, text=vl, font=("Segoe UI",10,"bold"),
-                     bg=C_WHITE, fg=cl).pack(side="left")
+            tk.Label(f_row, text=vl2, font=("Segoe UI",10,"bold"),
+                     bg=C_WHITE, fg=cl2).pack(side="left")
 
         write(matrix_text, f"""INTERPRETACIÓN DE LA MATRIZ DE CONFUSIÓN
-{'='*55}
+{"="*55}
 Modelo: {model_name}
 
 ┌─────────────────────┬───────────────┬───────────────┐
@@ -1010,31 +1068,94 @@ Modelo: {model_name}
 └─────────────────────┴───────────────┴───────────────┘
 
 MÉTRICAS DERIVADAS
-{'='*55}
+{"="*55}
 Exactitud  (Accuracy) = (VP+VN)/Total     = {acc:.4f}  ({acc*100:.1f}%)
 Precisión             = VP/(VP+FP)        = {prec:.4f}  ({prec*100:.1f}%)
 Sensibilidad (Recall) = VP/(VP+FN)        = {rec:.4f}  ({rec*100:.1f}%)
 Especificidad         = VN/(VN+FP)        = {spec:.4f}  ({spec*100:.1f}%)
 F1-Score              = 2·P·R/(P+R)       = {f1v:.4f}  ({f1v*100:.1f}%)
-AUC-ROC               = Área bajo ROC     = {v['auc']:.4f}
+AUC-ROC               = Área bajo ROC     = {v["auc"]:.4f}
 Tasa Falsos Negativos = FN/(FN+VP)        = {fnr:.4f}  ({fnr*100:.1f}%)
 Valor Pred. Positivo  = VP/(FP+VP)        = {prec:.4f}  ({prec*100:.1f}%)
 Valor Pred. Negativo  = VN/(VN+FN)        = {npv:.4f}  ({npv*100:.1f}%)
 
 INTERPRETACIÓN
-{'='*55}
+{"="*55}
 • VP={VP2}: clientes que SÍ responden, identificados correctamente.
 • VN={VN2}: clientes que NO responden, descartados correctamente.
-• FP={FP2}: clientes que NO responden pero el modelo dijo que SÍ
-  → gasto innecesario en campaña (Error tipo I).
-• FN={FN2}: clientes que SÍ responderían pero el modelo los
-  descartó → oportunidades de venta PERDIDAS (Error tipo II).
+• FP={FP2}: Error tipo I — predijo positivo cuando era negativo.
+• FN={FN2}: Error tipo II — perdió casos positivos reales.
 
-⚠ En campañas de marketing, reducir FN es prioritario
-  porque representa clientes interesados no contactados.
-  Se puede ajustar el umbral de clasificación (ej: thr=0.4)
-  para mejorar el Recall a costa de mayor FP.
+⚠ Los Falsos Negativos (FN) son más costosos en marketing:
+  representan clientes interesados que no se contactaron.
 """)
+    else:
+        # Multiclase — mostrar métricas globales weighted
+        acc2  = v["accuracy"]
+        f1w   = v["f1"]
+        aucw  = v["auc"]
+        precw = v["precision"]
+        recw  = v["recall"]
+        correct = np.diag(cm).sum()
+        total2  = cm.sum()
+
+        metricas_show = [
+            ("Accuracy (global)",    f"{acc2:.4f}  ({acc2*100:.1f}%)",    C_PRIMARY),
+            ("Precisión (weighted)", f"{precw:.4f} ({precw*100:.1f}%)",   C_SUCCESS),
+            ("Recall (weighted)",    f"{recw:.4f}  ({recw*100:.1f}%)",    C_WARN),
+            ("F1-Score (weighted)",  f"{f1w:.4f}  ({f1w*100:.1f}%)",      PALETA[3]),
+            ("AUC OVR (weighted)",   f"{aucw:.4f}",                        C_DANGER),
+            ("Total correcto",       f"{correct} / {total2}",              C_SUCCESS),
+        ]
+        for nm3, vl3, cl3 in metricas_show:
+            f_row = tk.Frame(cm_metrics_frame, bg=C_WHITE)
+            f_row.pack(fill="x", pady=2)
+            tk.Label(f_row, text=nm3, font=F_BODY, bg=C_WHITE,
+                     fg=C_DARK, width=26, anchor="w").pack(side="left")
+            tk.Label(f_row, text=vl3, font=("Segoe UI",10,"bold"),
+                     bg=C_WHITE, fg=cl3).pack(side="left")
+
+        # Precisión por clase
+        per_class = ""
+        for ci, cls in enumerate(clases_str):
+            tp_c = cm[ci, ci]
+            fp_c = cm[:, ci].sum() - tp_c
+            fn_c = cm[ci, :].sum() - tp_c
+            pr_c = tp_c/(tp_c+fp_c) if tp_c+fp_c else 0
+            re_c = tp_c/(tp_c+fn_c) if tp_c+fn_c else 0
+            f1_c = 2*pr_c*re_c/(pr_c+re_c) if pr_c+re_c else 0
+            per_class += f"  {cls:<18} Prec={pr_c:.3f}  Rec={re_c:.3f}  F1={f1_c:.3f}\n"
+
+        write(matrix_text, f"""INTERPRETACIÓN DE LA MATRIZ DE CONFUSIÓN (MULTICLASE)
+{"="*55}
+Modelo: {model_name}
+Clases: {", ".join(clases_str)}
+
+La diagonal principal (↘) representa las predicciones CORRECTAS.
+Los valores fuera de la diagonal son errores (confusión entre clases).
+
+MÉTRICAS GLOBALES (promedio weighted)
+{"="*55}
+Accuracy           = {acc2:.4f}  ({acc2*100:.1f}%)  → corrección global
+Precisión weighted = {precw:.4f}  ({precw*100:.1f}%)  → VP/(VP+FP) por clase
+Recall weighted    = {recw:.4f}  ({recw*100:.1f}%)  → VP/(VP+FN) por clase
+F1-Score weighted  = {f1w:.4f}  ({f1w*100:.1f}%)  → media armónica P/R
+AUC OVR weighted   = {aucw:.4f}            → discriminación multiclase
+
+MÉTRICAS POR CLASE
+{"="*55}
+  Clase              Precisión    Recall       F1-Score
+{per_class}
+INTERPRETACIÓN
+{"="*55}
+• Las métricas "weighted" ponderan por el soporte (tamaño) de cada clase.
+• Una clase con F1 bajo indica confusión frecuente con otra clase similar.
+• Revisar las filas/columnas con más errores en el heatmap para identificar
+  qué clases el modelo confunde con mayor frecuencia.
+• Para campañas: priorizar las clases con mayor Recall para no perder
+  los casos más importantes del negocio.
+""")
+
 
 combo_model.bind("<<ComboboxSelected>>", lambda e: render_matrix())
 btn_run.configure(command=run_analysis)
