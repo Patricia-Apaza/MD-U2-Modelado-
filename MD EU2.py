@@ -1,1167 +1,1077 @@
-# =============================================================================
-#  MINERÍA DE DATOS — EXAMEN UNIDAD 2
-#  Interfaz gráfica con tkinter
-#  Ing.: Milton Edward Humpiri Flores — E.P. Ingeniería de Sistemas UPeU
-# =============================================================================
-#  INSTALAR dependencias (ejecutar UNA vez en PowerShell):
-#  pip install pandas numpy matplotlib seaborn scikit-learn scipy
-# =============================================================================
-
-import warnings, threading
-warnings.filterwarnings("ignore")
+"""
+Instalar dependencias:
+    pip install pandas numpy scikit-learn matplotlib seaborn scipy chardet
+"""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-import os, sys
-
-# ── Verificar librerías ───────────────────────────────────────────────────
-MISSING = []
-try: import pandas as pd
-except: MISSING.append("pandas")
-try: import numpy as np
-except: MISSING.append("numpy")
-try: import matplotlib
-except: MISSING.append("matplotlib")
-try: import seaborn
-except: MISSING.append("seaborn")
-try: import sklearn
-except: MISSING.append("scikit-learn")
-try: import scipy
-except: MISSING.append("scipy")
-
-if MISSING:
-    root = tk.Tk(); root.withdraw()
-    messagebox.showerror(
-        "Librerías faltantes",
-        f"Instala estas librerías antes de continuar:\n\n"
-        f"pip install {' '.join(MISSING)}\n\n"
-        f"Abre PowerShell y ejecuta ese comando."
-    )
-    sys.exit(1)
+from tkinter import ttk, filedialog, scrolledtext
+import threading
+import traceback
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import chardet
 import matplotlib
 matplotlib.use("TkAgg")
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import seaborn as sns
+from scipy.cluster.hierarchy import dendrogram, linkage
 
-from sklearn.model_selection   import train_test_split
-from sklearn.preprocessing     import MinMaxScaler, LabelEncoder
-from sklearn.dummy             import DummyClassifier
-from sklearn.linear_model      import LogisticRegression
-from sklearn.tree              import DecisionTreeClassifier, plot_tree
-from sklearn.ensemble          import RandomForestClassifier
-from sklearn.neighbors         import KNeighborsClassifier
-from sklearn.naive_bayes       import BernoulliNB
-from sklearn.cluster           import KMeans, AgglomerativeClustering
-from sklearn.metrics           import (
-    silhouette_score, accuracy_score, f1_score,
-    roc_auc_score, roc_curve, confusion_matrix,
-    precision_score, recall_score, classification_report
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.dummy import DummyClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import KMeans, AgglomerativeClustering
+from sklearn.metrics import (
+    confusion_matrix, roc_curve, auc,
+    accuracy_score, f1_score, silhouette_score,
+    precision_score, recall_score
 )
-from scipy.cluster.hierarchy   import dendrogram, linkage
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  COLORES Y ESTILOS
-# ═════════════════════════════════════════════════════════════════════════════
-C_BG       = "#F8F9FA"
-C_WHITE    = "#FFFFFF"
-C_PRIMARY  = "#2563EB"
-C_PRIMARY2 = "#1D4ED8"
-C_SUCCESS  = "#16A34A"
-C_WARN     = "#D97706"
-C_DANGER   = "#DC2626"
-C_MUTED    = "#6B7280"
-C_BORDER   = "#E5E7EB"
-C_DARK     = "#111827"
-C_LIGHT    = "#F3F4F6"
-C_HEADER   = "#1E3A5F"
+# ─────────────────────────────────────────────
+#  PALETA Y ESTILO GLOBAL
+# ─────────────────────────────────────────────
+DARK_BG    = "#0D1117"
+PANEL_BG   = "#161B22"
+CARD_BG    = "#21262D"
+BORDER     = "#30363D"
+ACCENT     = "#58A6FF"
+ACCENT2    = "#3FB950"
+ACCENT3    = "#F78166"
+TEXT_WHITE = "#E6EDF3"
+TEXT_GRAY  = "#8B949E"
+FONT_TITLE = ("Segoe UI", 13, "bold")
+FONT_BODY  = ("Segoe UI", 10)
+FONT_MONO  = ("Consolas", 9)
+FONT_SMALL = ("Segoe UI", 9)
 
-PALETA = ["#2563EB","#16A34A","#D97706","#7C3AED","#DB2777","#0891B2"]
-
+# Paleta para matplotlib
+PLOT_COLORS = ["#58A6FF", "#3FB950", "#F78166", "#D2A8FF", "#FFA657"]
+sns.set_theme(style="dark")
 plt.rcParams.update({
-    "figure.facecolor": "white",
-    "axes.facecolor":   "#F9FAFB",
-    "axes.spines.top":  False,
-    "axes.spines.right":False,
-    "axes.grid":        True,
-    "grid.alpha":       0.3,
-    "grid.linestyle":   "--",
-    "font.family":      "sans-serif",
-    "font.size":        10,
+    "figure.facecolor":  DARK_BG,
+    "axes.facecolor":    PANEL_BG,
+    "axes.edgecolor":    BORDER,
+    "axes.labelcolor":   TEXT_WHITE,
+    "xtick.color":       TEXT_GRAY,
+    "ytick.color":       TEXT_GRAY,
+    "text.color":        TEXT_WHITE,
+    "grid.color":        BORDER,
+    "legend.facecolor":  CARD_BG,
+    "legend.edgecolor":  BORDER,
 })
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  ESTADO GLOBAL
-# ═════════════════════════════════════════════════════════════════════════════
-state = {
-    "df": None, "X": None, "y": None,
-    "X_train": None, "X_val": None, "X_test": None,
-    "y_train": None, "y_val": None, "y_test": None,
-    "X_train_sc": None, "X_val_sc": None, "X_test_sc": None,
-    "resultados": None, "df_res": None,
-    "labels_km": None, "labels_agg": None,
-    "sil_km": 0, "sil_agg": 0,
-    "mejor_modelo": None,
-    "num_cols": None,
-    "X_clust": None,
-}
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  VENTANA PRINCIPAL
-# ═════════════════════════════════════════════════════════════════════════════
-root = tk.Tk()
-root.title("Minería de Datos — Examen Unidad 2  |  UPeU")
-root.geometry("1200x800")
-root.configure(bg=C_BG)
-root.minsize(1000, 680)
-
-# ── Fuentes ───────────────────────────────────────────────────────────────
-F_TITLE  = ("Segoe UI", 15, "bold")
-F_HEAD   = ("Segoe UI", 11, "bold")
-F_BODY   = ("Segoe UI", 10)
-F_SMALL  = ("Segoe UI",  9)
-F_MONO   = ("Consolas",  9)
-F_BIG    = ("Segoe UI", 22, "bold")
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  HEADER
-# ═════════════════════════════════════════════════════════════════════════════
-hdr = tk.Frame(root, bg=C_HEADER, height=62)
-hdr.pack(fill="x"); hdr.pack_propagate(False)
-
-tk.Label(hdr, text="⛏  Minería de Datos — Examen Unidad 2",
-         font=("Segoe UI", 14, "bold"), bg=C_HEADER, fg="white").pack(side="left", padx=20, pady=14)
-tk.Label(hdr, text="E.P. Ingeniería de Sistemas  |  UPeU",
-         font=F_SMALL, bg=C_HEADER, fg="#93C5FD").pack(side="right", padx=20)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  CUERPO: sidebar + contenido
-# ═════════════════════════════════════════════════════════════════════════════
-body = tk.Frame(root, bg=C_BG)
-body.pack(fill="both", expand=True, padx=0, pady=0)
-
-# ── Sidebar ───────────────────────────────────────────────────────────────
-sidebar = tk.Frame(body, bg=C_WHITE, width=210,
-                   relief="flat", bd=0,
-                   highlightthickness=1, highlightbackground=C_BORDER)
-sidebar.pack(side="left", fill="y")
-sidebar.pack_propagate(False)
-
-# ── Área de contenido ─────────────────────────────────────────────────────
-content = tk.Frame(body, bg=C_BG)
-content.pack(side="left", fill="both", expand=True)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANELS DICT
-# ═════════════════════════════════════════════════════════════════════════════
-panels = {}
-
-def show_panel(name):
-    for p in panels.values():
-        p.pack_forget()
-    panels[name].pack(fill="both", expand=True)
-    for btn in nav_buttons:
-        btn.configure(bg=C_WHITE, fg=C_DARK, relief="flat")
-    nav_buttons[list(panels.keys()).index(name)].configure(
-        bg=C_PRIMARY, fg="white")
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  HELPER: frame con scroll
-# ═════════════════════════════════════════════════════════════════════════════
-def scrollable(parent):
-    outer = tk.Frame(parent, bg=C_BG)
-    outer.pack(fill="both", expand=True)
-    canvas = tk.Canvas(outer, bg=C_BG, bd=0, highlightthickness=0)
-    sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-    inner = tk.Frame(canvas, bg=C_BG)
-    inner.bind("<Configure>",
-               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.create_window((0, 0), window=inner, anchor="nw")
-    canvas.configure(yscrollcommand=sb.set)
-    canvas.pack(side="left", fill="both", expand=True)
-    sb.pack(side="right", fill="y")
-    canvas.bind_all("<MouseWheel>",
-                    lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
-    return inner
-
-def card(parent, title=None, pad=14):
-    f = tk.Frame(parent, bg=C_WHITE,
-                 highlightthickness=1, highlightbackground=C_BORDER)
-    f.pack(fill="x", padx=16, pady=8)
-    if title:
-        tk.Label(f, text=title, font=F_HEAD, bg=C_WHITE,
-                 fg=C_HEADER).pack(anchor="w", padx=pad, pady=(pad,4))
-        sep = tk.Frame(f, bg=C_BORDER, height=1)
-        sep.pack(fill="x", padx=pad)
-    inner = tk.Frame(f, bg=C_WHITE)
-    inner.pack(fill="x", padx=pad, pady=(8, pad))
-    return inner
-
-def metric_box(parent, label, value, color=C_PRIMARY):
-    f = tk.Frame(parent, bg=color, width=130, height=72)
-    f.pack(side="left", padx=5, pady=4)
-    f.pack_propagate(False)
-    tk.Label(f, text=str(value), font=("Segoe UI", 18, "bold"),
-             bg=color, fg="white").pack(pady=(10, 0))
-    tk.Label(f, text=label, font=("Segoe UI", 8),
-             bg=color, fg="white").pack()
-
-def text_box(parent, height=8):
-    t = scrolledtext.ScrolledText(parent, font=F_MONO, height=height,
-                                  bg="#F1F5F9", fg=C_DARK,
-                                  relief="flat", bd=0, wrap="word",
-                                  highlightthickness=1,
-                                  highlightbackground=C_BORDER)
-    t.pack(fill="both", expand=True, pady=4)
-    return t
-
-def write(t, txt):
-    t.configure(state="normal")
-    t.delete("1.0", "end")
-    t.insert("end", txt)
-    t.configure(state="disabled")
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANEL 0 — DATOS
-# ═════════════════════════════════════════════════════════════════════════════
-p0 = tk.Frame(content, bg=C_BG)
-panels["Datos"] = p0
-sc0 = scrollable(p0)
-
-# Zona de carga
-c0 = card(sc0, "📂  Cargar dataset")
-
-# Recuadro drag-and-drop visual
-drop_frame = tk.Frame(c0, bg="#EFF6FF",
-                      highlightthickness=2, highlightbackground=C_PRIMARY)
-drop_frame.pack(fill="x", pady=(0,10))
-
-tk.Label(drop_frame, text="⬆", font=("Segoe UI", 28),
-         bg="#EFF6FF", fg=C_PRIMARY).pack(pady=(18,4))
-lbl_file = tk.Label(drop_frame,
-                    text="Haga clic en el botón para seleccionar su archivo CSV",
-                    font=F_BODY, bg="#EFF6FF", fg=C_MUTED)
-lbl_file.pack(pady=(0,4))
-tk.Label(drop_frame, text="Formato: .csv separado por comas",
-         font=F_SMALL, bg="#EFF6FF", fg="#93C5FD").pack(pady=(0,16))
-
-def browse_file():
-    path = filedialog.askopenfilename(
-        title="Seleccionar dataset CSV",
-        filetypes=[("CSV files","*.csv"),("All files","*.*")])
-    if path:
-        var_path.set(path)
-        lbl_file.configure(
-            text=f"✓  {os.path.basename(path)}",
-            fg=C_SUCCESS, font=(F_BODY[0], F_BODY[1], "bold"))
-        drop_frame.configure(highlightbackground=C_SUCCESS, bg="#F0FDF4")
-
-var_path = tk.StringVar()
-
-btn_browse = tk.Button(c0, text="  📁  Seleccionar archivo CSV  ",
-                       font=F_HEAD, bg=C_PRIMARY, fg="white",
-                       activebackground=C_PRIMARY2, relief="flat",
-                       cursor="hand2", command=browse_file, padx=10, pady=8)
-btn_browse.pack(pady=4)
-
-# Configuración
-c0b = card(sc0, "⚙️  Configuración del análisis")
-
-row1 = tk.Frame(c0b, bg=C_WHITE)
-row1.pack(fill="x", pady=4)
-
-tk.Label(row1, text="Columna objetivo:", font=F_BODY,
-         bg=C_WHITE, fg=C_DARK, width=20, anchor="w").pack(side="left")
-var_target = tk.StringVar(value="")
-entry_target = tk.Entry(row1, textvariable=var_target, font=F_BODY,
-                        width=22, relief="solid", bd=1)
-entry_target.pack(side="left", padx=6)
-tk.Label(row1, text="(dejar vacío = última columna)",
-         font=F_SMALL, bg=C_WHITE, fg=C_MUTED).pack(side="left")
-
-row2 = tk.Frame(c0b, bg=C_WHITE)
-row2.pack(fill="x", pady=4)
-tk.Label(row2, text="Número de clústeres K:", font=F_BODY,
-         bg=C_WHITE, fg=C_DARK, width=20, anchor="w").pack(side="left")
-var_k = tk.IntVar(value=3)
-spin_k = tk.Spinbox(row2, from_=2, to=10, textvariable=var_k,
-                    font=F_BODY, width=5, relief="solid", bd=1)
-spin_k.pack(side="left", padx=6)
-
-# Botón ejecutar
-btn_run = tk.Button(c0b,
-                    text="  ▶  EJECUTAR ANÁLISIS COMPLETO  ",
-                    font=("Segoe UI", 11, "bold"),
-                    bg=C_SUCCESS, fg="white",
-                    activebackground="#15803D",
-                    relief="flat", cursor="hand2",
-                    padx=14, pady=10)
-btn_run.pack(pady=12)
-
-# Log
-c0c = card(sc0, "📋  Log de ejecución")
-log_box = scrolledtext.ScrolledText(c0c, font=F_MONO, height=10,
-                                    bg="#0F172A", fg="#86EFAC",
-                                    relief="flat", bd=0, state="disabled",
-                                    highlightthickness=1,
-                                    highlightbackground=C_BORDER)
-log_box.pack(fill="both")
-
-# Preview dataset
-c0d = card(sc0, "👁  Vista previa del dataset")
-preview_box = scrolledtext.ScrolledText(c0d, font=F_MONO, height=8,
-                                        bg="#F8FAFC", fg=C_DARK,
-                                        relief="flat", bd=0, state="disabled",
-                                        highlightthickness=1,
-                                        highlightbackground=C_BORDER)
-preview_box.pack(fill="both")
-
-def log(msg, color=None):
-    log_box.configure(state="normal")
-    log_box.insert("end", msg + "\n")
-    log_box.see("end")
-    log_box.configure(state="disabled")
-    root.update_idletasks()
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANEL 1 — PARTICIÓN
-# ═════════════════════════════════════════════════════════════════════════════
-p1 = tk.Frame(content, bg=C_BG)
-panels["Partición"] = p1
-sc1 = scrollable(p1)
-
-c1a = card(sc1, "📊  Métricas de partición")
-metrics_part_frame = tk.Frame(c1a, bg=C_WHITE)
-metrics_part_frame.pack(fill="x")
-
-c1b = card(sc1, "📈  Gráfico de distribución")
-fig_part_holder = tk.Frame(c1b, bg=C_WHITE)
-fig_part_holder.pack(fill="both", expand=True)
-
-c1c = card(sc1, "💬  Explicación — Data Leakage y Baseline")
-part_text = text_box(c1c, height=14)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANEL 2 — CLUSTERING
-# ═════════════════════════════════════════════════════════════════════════════
-p2 = tk.Frame(content, bg=C_BG)
-panels["Clustering"] = p2
-sc2 = scrollable(p2)
-
-c2a = card(sc2, "🔵  Métricas de clustering")
-metrics_clust_frame = tk.Frame(c2a, bg=C_WHITE)
-metrics_clust_frame.pack(fill="x")
-
-c2b = card(sc2, "📈  Gráficos — K-means, Silhouette y Dendrograma")
-fig_clust_holder = tk.Frame(c2b, bg=C_WHITE)
-fig_clust_holder.pack(fill="both")
-
-c2c = card(sc2, "🗂  Perfiles de clústeres")
-clust_text = text_box(c2c, height=12)
-
-c2d = card(sc2, "💬  Interpretación y perfiles de clientes")
-clust_interp = text_box(c2d, height=8)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANEL 3 — CLASIFICACIÓN
-# ═════════════════════════════════════════════════════════════════════════════
-p3 = tk.Frame(content, bg=C_BG)
-panels["Clasificación"] = p3
-sc3 = scrollable(p3)
-
-c3a = card(sc3, "🏆  Mejor modelo")
-metrics_clas_frame = tk.Frame(c3a, bg=C_WHITE)
-metrics_clas_frame.pack(fill="x")
-
-c3b = card(sc3, "📈  Comparativa de modelos e importancia de variables")
-fig_clas_holder = tk.Frame(c3b, bg=C_WHITE)
-fig_clas_holder.pack(fill="both")
-
-c3c = card(sc3, "💬  Explicación — Árbol de Decisión y Random Forest")
-clas_text = text_box(c3c, height=14)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANEL 4 — EVALUACIÓN
-# ═════════════════════════════════════════════════════════════════════════════
-p4 = tk.Frame(content, bg=C_BG)
-panels["Evaluación"] = p4
-sc4 = scrollable(p4)
-
-c4a = card(sc4, "📈  Curva ROC")
-fig_roc_holder = tk.Frame(c4a, bg=C_WHITE)
-fig_roc_holder.pack(fill="both")
-
-c4b = card(sc4, "📋  Tabla comparativa de corridas")
-tabla_frame = tk.Frame(c4b, bg=C_WHITE)
-tabla_frame.pack(fill="x")
-
-c4c = card(sc4, "💬  Comunicación de resultados — Resumen ejecutivo")
-eval_text = text_box(c4c, height=12)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  PANEL 5 — MATRIZ DE CONFUSIÓN
-# ═════════════════════════════════════════════════════════════════════════════
-p5 = tk.Frame(content, bg=C_BG)
-panels["Matriz"] = p5
-sc5 = scrollable(p5)
-
-c5a = card(sc5, "🔲  Seleccionar modelo")
-var_model_sel = tk.StringVar()
-combo_model = ttk.Combobox(c5a, textvariable=var_model_sel,
-                           font=F_BODY, state="readonly", width=30)
-combo_model.pack(anchor="w", pady=4)
-
-c5b = card(sc5, "🗺  Matriz de confusión")
-fig_cm_holder = tk.Frame(c5b, bg=C_WHITE)
-fig_cm_holder.pack(fill="both")
-
-c5c = card(sc5, "📐  Métricas derivadas")
-cm_metrics_frame = tk.Frame(c5c, bg=C_WHITE)
-cm_metrics_frame.pack(fill="x")
-
-c5d = card(sc5, "💬  Interpretación de la matriz")
-matrix_text = text_box(c5d, height=10)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  SIDEBAR NAVIGATION
-# ═════════════════════════════════════════════════════════════════════════════
-tk.Label(sidebar, text="NAVEGACIÓN", font=("Segoe UI", 8, "bold"),
-         bg=C_WHITE, fg=C_MUTED).pack(anchor="w", padx=16, pady=(16,6))
-
-nav_icons  = ["📂","📊","🔵","🌲","📈","🔲"]
-nav_labels = ["Datos","Partición","Clustering","Clasificación","Evaluación","Matriz"]
-nav_buttons = []
-
-for icon, lbl in zip(nav_icons, nav_labels):
-    b = tk.Button(sidebar, text=f"  {icon}  {lbl}",
-                  font=F_BODY, bg=C_WHITE, fg=C_DARK,
-                  activebackground=C_PRIMARY, activeforeground="white",
-                  relief="flat", anchor="w", cursor="hand2",
-                  command=lambda n=lbl: show_panel(n))
-    b.pack(fill="x", padx=8, pady=2, ipady=6)
-    nav_buttons.append(b)
-
-tk.Frame(sidebar, bg=C_BORDER, height=1).pack(fill="x", padx=16, pady=16)
-tk.Label(sidebar, text="Sé Íntegro\nSé Misionero\nSé Innovador",
-         font=("Segoe UI", 8, "italic"), bg=C_WHITE,
-         fg=C_MUTED, justify="center").pack(padx=8)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  HELPERS PARA INCRUSTAR FIGURAS
-# ═════════════════════════════════════════════════════════════════════════════
-def embed_fig(holder, fig):
-    for w in holder.winfo_children():
-        w.destroy()
-    canvas = FigureCanvasTkAgg(fig, master=holder)
-    canvas.draw()
-    canvas.get_tk_widget().pack(fill="both", expand=True)
-
-def build_table(parent, df_table, best_row=None):
-    for w in parent.winfo_children():
-        w.destroy()
-    cols = list(df_table.columns)
-    idx  = list(df_table.index)
-    style_h = {"bg": C_HEADER, "fg": "white", "font": F_HEAD,
-                "relief": "flat", "padx": 8, "pady": 6}
-    style_n = {"bg": C_WHITE,  "fg": C_DARK,  "font": F_BODY,
-                "relief": "flat", "padx": 8, "pady": 5}
-    style_b = {"bg": "#DCFCE7","fg": "#15803D","font": F_BODY,
-                "relief": "flat", "padx": 8, "pady": 5}
-
-    tk.Label(parent, text="Modelo", **style_h).grid(row=0, column=0, sticky="nsew")
-    for j, col in enumerate(cols):
-        tk.Label(parent, text=col, **style_h).grid(row=0,column=j+1,sticky="nsew")
-    tk.Frame(parent, bg=C_BORDER, height=1).grid(
-        row=1, columnspan=len(cols)+1, sticky="ew")
-
-    for i, row_idx in enumerate(idx):
-        st = style_b if row_idx == best_row else style_n
-        bg = st["bg"]
-        tk.Label(parent, text=row_idx, **st).grid(
-            row=i+2, column=0, sticky="nsew")
-        for j, col in enumerate(cols):
-            val = df_table.loc[row_idx, col]
-            txt = f"{val:.4f}" if isinstance(val, float) else str(val)
-            tk.Label(parent, text=txt, bg=bg, fg=st["fg"],
-                     font=F_BODY, relief="flat", padx=8, pady=5
-                     ).grid(row=i+2, column=j+1, sticky="nsew")
-        tk.Frame(parent, bg=C_BORDER, height=1).grid(
-            row=100+i, columnspan=len(cols)+1, sticky="ew")
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  LÓGICA DE ANÁLISIS
-# ═════════════════════════════════════════════════════════════════════════════
-def run_analysis():
-    path   = var_path.get()
-    target = var_target.get().strip()
-    K      = var_k.get()
-
-    if not path:
-        messagebox.showwarning("Sin archivo", "Seleccione un archivo CSV primero.")
-        return
-
-    btn_run.configure(state="disabled", text="  ⏳  Ejecutando...")
-    log("=" * 55)
-    log("▶ Iniciando análisis completo...")
-
-    # ── Cargar datos ─────────────────────────────────────────────────────
-    try:
-        df = pd.read_csv(path)
-        state["df"] = df
-    except Exception as e:
-        messagebox.showerror("Error al cargar", str(e))
-        btn_run.configure(state="normal", text="  ▶  EJECUTAR ANÁLISIS COMPLETO  ")
-        return
-
-    log(f"✓ Dataset cargado: {df.shape[0]} filas × {df.shape[1]} columnas")
-
-    if not target:
-        target = df.columns[-1]
-        log(f"  Columna objetivo detectada: '{target}'")
-
-    # Preview
-    write(preview_box, df.head(10).to_string())
-
-    # ── Preparar features ─────────────────────────────────────────────────
-    df_m = df.copy()
-    cat_c = [c for c in df_m.select_dtypes(include=["object","category"]).columns
-             if c != target]
-    le = LabelEncoder()
-    for col in cat_c:
-        df_m[col] = le.fit_transform(df_m[col].astype(str))
-    if df_m[target].dtype == object:
-        df_m[target] = le.fit_transform(df_m[target].astype(str))
-
-    X = df_m.drop(columns=[target])
-    y = df_m[target]
-    state["X"] = X; state["y"] = y
-
-    # ── Partición 70/15/15 ───────────────────────────────────────────────
-    X_tmp, X_test, y_tmp, y_test = train_test_split(
-        X, y, test_size=0.15, random_state=42, stratify=y)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_tmp, y_tmp, test_size=0.15/0.85, random_state=42, stratify=y_tmp)
-
-    scaler = MinMaxScaler()
-    X_train_sc = scaler.fit_transform(X_train)
-    X_val_sc   = scaler.transform(X_val)
-    X_test_sc  = scaler.transform(X_test)
-
-    state.update({"X_train":X_train,"X_val":X_val,"X_test":X_test,
-                  "y_train":y_train,"y_val":y_val,"y_test":y_test,
-                  "X_train_sc":X_train_sc,"X_val_sc":X_val_sc,
-                  "X_test_sc":X_test_sc})
-
-    log(f"✓ Partición: {len(X_train)} train / {len(X_val)} val / {len(X_test)} test")
-
-    # ── Panel Partición ───────────────────────────────────────────────────
-    for w in metrics_part_frame.winfo_children(): w.destroy()
-    n = len(X)
-    for lbl, val, col in [
-        ("Total",          str(n),          C_HEADER),
-        ("Entrenamiento",  f"{len(X_train)}\n(70%)", C_PRIMARY),
-        ("Validación",     f"{len(X_val)}\n(15%)",   C_WARN),
-        ("Prueba",         f"{len(X_test)}\n(15%)",  C_SUCCESS),
-        ("Columnas",       str(X.shape[1]), C_MUTED),
-    ]:
-        metric_box(metrics_part_frame, lbl, val, col)
-
-    fig_p, axes_p = plt.subplots(1, 2, figsize=(10, 3.5))
-    sizes  = [len(X_train), len(X_val), len(X_test)]
-    labels_p = [f"Entrenamiento\n{len(X_train)} ({len(X_train)/n*100:.0f}%)",
-                f"Validación\n{len(X_val)} ({len(X_val)/n*100:.0f}%)",
-                f"Prueba\n{len(X_test)} ({len(X_test)/n*100:.0f}%)"]
-    axes_p[0].pie(sizes, labels=labels_p,
-                  colors=[PALETA[0],PALETA[2],PALETA[1]],
-                  startangle=90, wedgeprops=dict(width=0.5))
-    axes_p[0].set_title("Partición del dataset", fontweight="bold")
-
-    cc = y_train.value_counts().sort_index()
-    axes_p[1].bar([str(c) for c in cc.index], cc.values,
-                  color=PALETA[:len(cc)], width=0.5, edgecolor="white")
-    axes_p[1].set_title("Distribución de clases (entrenamiento)", fontweight="bold")
-    axes_p[1].set_xlabel("Clase"); axes_p[1].set_ylabel("Cantidad")
-    for i,v in enumerate(cc.values):
-        axes_p[1].text(i, v+2, str(v), ha="center", fontsize=9)
-    fig_p.tight_layout()
-    embed_fig(fig_part_holder, fig_p)
-
-    maj = y.value_counts().max()
-    acc_base = maj/n
-    write(part_text, f"""PARTICIÓN DE DATOS — 70 / 15 / 15
-{'='*55}
-
-El dataset se divide ESTRATIFICADAMENTE en tres subconjuntos:
-
-  • Entrenamiento (70% = {len(X_train)} registros)
-    El modelo aprende los patrones de los datos.
-
-  • Validación (15% = {len(X_val)} registros)
-    Se usa para ajustar hiperparámetros y detectar
-    sobreajuste (overfitting) durante el desarrollo.
-
-  • Prueba (15% = {len(X_test)} registros)
-    Evaluación FINAL e imparcial del modelo.
-    Solo se usa una vez, al final.
-
-{'='*55}
-DATA LEAKAGE — ¿Qué es y cómo se evita?
-{'='*55}
-
-El Data Leakage ocurre cuando información de validación/prueba
-se filtra al entrenamiento, haciendo que el modelo parezca
-mejor de lo que realmente es en producción.
-
-  ✗ INCORRECTO:
-    scaler.fit_transform(X_completo) → luego dividir
-    (el scaler ya vio los datos de prueba)
-
-  ✓ CORRECTO (aplicado aquí):
-    scaler.fit(X_train)        ← aprende min/max solo de train
-    scaler.transform(X_val)    ← aplica la misma escala
-    scaler.transform(X_test)   ← aplica la misma escala
-
-  También aplica a: imputación de nulos, encoding,
-  selección de features, PCA, etc.
-
-{'='*55}
-MODELO BASELINE
-{'='*55}
-
-Baseline elegido: DummyClassifier (clase mayoritaria)
-  → Accuracy baseline: {acc_base:.4f} ({acc_base*100:.1f}%)
-
-Todo modelo más complejo DEBE superar este valor.
-Se usa Regresión Logística como baseline más sofisticado.
-""")
-    log("✓ Partición completada")
-
-    # ── Clustering ────────────────────────────────────────────────────────
-    log("→ Ejecutando clustering...")
-    num_cols = [c for c in df.select_dtypes(include=[np.number]).columns
-                if c != target]
-    if not num_cols:
-        num_cols = list(X.columns)
-    state["num_cols"] = num_cols
-
-    Xc_raw = df[num_cols].fillna(df[num_cols].median())
-    sc_c   = MinMaxScaler()
-    Xc     = sc_c.fit_transform(Xc_raw)
-    state["X_clust"] = Xc
-
-    K_range = range(2, min(8, len(Xc)//10+2))
-    sil_list, inert_list = [], []
-    for k in K_range:
-        km  = KMeans(n_clusters=k, random_state=42, n_init=10)
-        lb  = km.fit_predict(Xc)
-        sil_list.append(silhouette_score(Xc, lb) if len(set(lb))>1 else 0)
-        inert_list.append(km.inertia_)
-
-    km_fin = KMeans(n_clusters=K, random_state=42, n_init=10)
-    lbl_km = km_fin.fit_predict(Xc)
-    sil_km = silhouette_score(Xc, lbl_km) if len(set(lbl_km))>1 else 0
-
-    agg = AgglomerativeClustering(n_clusters=K, linkage="ward")
-    lbl_agg = agg.fit_predict(Xc)
-    sil_agg = silhouette_score(Xc, lbl_agg) if len(set(lbl_agg))>1 else 0
-
-    state["labels_km"] = lbl_km
-    state["labels_agg"] = lbl_agg
-    state["sil_km"] = sil_km
-    state["sil_agg"] = sil_agg
-
-    df["cluster_kmeans"] = lbl_km
-    cnt_km = pd.Series(lbl_km).value_counts().sort_index()
-
-    for w in metrics_clust_frame.winfo_children(): w.destroy()
-    for lbl2, val2, col2 in [
-        ("K clústeres",     str(K),           C_PRIMARY),
-        ("Silhouette KM",   f"{sil_km:.3f}",  C_SUCCESS if sil_km>0.3 else C_WARN),
-        ("Silhouette Jer.", f"{sil_agg:.3f}", C_SUCCESS if sil_agg>0.3 else C_WARN),
-        ("Clúster mayor",   str(cnt_km.max()), C_MUTED),
-        ("Clúster menor",   str(cnt_km.min()), C_MUTED),
-    ]:
-        metric_box(metrics_clust_frame, lbl2, val2, col2)
-
-    # Figuras clustering
-    fig_cl, axes_cl = plt.subplots(2, 2, figsize=(12, 8))
-    fig_cl.suptitle("Clustering — K-means y Jerárquico", fontweight="bold")
-
-    axes_cl[0,0].plot(list(K_range), sil_list, marker="o",
-                      color=PALETA[3], lw=2, ms=7)
-    axes_cl[0,0].axvline(x=K, color=PALETA[2], ls="--", label=f"K={K}")
-    axes_cl[0,0].set_title("Silhouette Score vs K"); axes_cl[0,0].legend()
-    axes_cl[0,0].set_xlabel("K"); axes_cl[0,0].set_ylabel("Silhouette")
-
-    axes_cl[0,1].plot(list(K_range), inert_list, marker="s",
-                      color=PALETA[0], lw=2, ms=7)
-    axes_cl[0,1].axvline(x=K, color=PALETA[2], ls="--", label=f"K={K}")
-    axes_cl[0,1].set_title("Método del Codo (Inercia)"); axes_cl[0,1].legend()
-    axes_cl[0,1].set_xlabel("K"); axes_cl[0,1].set_ylabel("Inercia")
-
-    axes_cl[1,0].bar([f"C{i+1}" for i in cnt_km.index], cnt_km.values,
-                     color=PALETA[:K], edgecolor="white", width=0.6)
-    axes_cl[1,0].set_title(f"K-means — Distribución (K={K})")
-    axes_cl[1,0].set_ylabel("Registros")
-    for i,v in enumerate(cnt_km.values):
-        axes_cl[1,0].text(i, v+2, str(v), ha="center", fontsize=9)
-
-    samp = np.random.choice(len(Xc), min(150, len(Xc)), replace=False)
-    Z = linkage(Xc[samp], method="ward")
-    dendrogram(Z, ax=axes_cl[1,1], no_labels=True,
-               above_threshold_color="#B4B2A9", color_threshold=0)
-    axes_cl[1,1].set_title("Dendrograma — Jerárquico (muestra)")
-    axes_cl[1,1].set_xlabel("Muestras"); axes_cl[1,1].set_ylabel("Distancia Ward")
-    thresh = np.sort(Z[:,2])[-(K-1)] if K>1 else Z[:,2].max()
-    axes_cl[1,1].axhline(y=thresh, color=PALETA[2], ls="--", label=f"Corte K={K}")
-    axes_cl[1,1].legend()
-
-    fig_cl.tight_layout()
-    embed_fig(fig_clust_holder, fig_cl)
-
-    # Perfil textual
-    perfil = df.groupby("cluster_kmeans")[num_cols].mean().round(2)
-    perfil.index = [f"Clúster {i+1}" for i in perfil.index]
-    write(clust_text, "MEDIAS POR CLÚSTER\n" + "="*50 + "\n" + perfil.to_string())
-
-    best_k_sil = list(K_range)[sil_list.index(max(sil_list))] if sil_list else K
-    q = "buena ✓" if sil_km>0.5 else "moderada" if sil_km>0.25 else "débil ⚠"
-
-    # Generar perfiles dinámicos basados en los datos reales
-    col_ppal = num_cols[0] if num_cols else "variable principal"
-    perfiles_txt = ""
-    for i in perfil.index:
-        fila = perfil.loc[i]
-        top_col  = fila.idxmax()
-        low_col  = fila.idxmin()
-        top_val  = fila[top_col]
-        low_val  = fila[low_col]
-        n_reg    = cnt_km.get(int(i.split()[-1])-1, "?")
-        perfiles_txt += f"\n  {i} ({n_reg} registros)\n"
-        perfiles_txt += f"    Valor más alto  → {top_col}: {top_val:.2f}\n"
-        perfiles_txt += f"    Valor más bajo  → {low_col}: {low_val:.2f}\n"
-
-    write(clust_interp, f"""INTERPRETACIÓN DE CLÚSTERES
-{'='*55}
-
-K-means (K={K}):
-  Silhouette = {sil_km:.4f} → separación {q}
-  K óptimo sugerido por silhouette: K={best_k_sil}
-
-Clustering Jerárquico (Ward, K={K}):
-  Silhouette = {sil_agg:.4f}
-
-PERFILES REALES DE CADA CLÚSTER
-{'='*55}
-(Basados en los valores medios del dataset cargado)
-{perfiles_txt}
-DIFERENCIA K-means vs Jerárquico
-{'='*55}
-  K-means: rápido, requiere K previo, asume clústeres esféricos.
-  Jerárquico: no requiere K previo, usa dendrograma para
-  visualizar agrupaciones; más lento en datasets grandes.
-""")
-    log(f"✓ Clustering: sil_km={sil_km:.3f}, sil_agg={sil_agg:.3f}")
-
-    # ── Clasificación ─────────────────────────────────────────────────────
-    log("→ Entrenando modelos de clasificación...")
-    modelos = {
-        "Baseline":          DummyClassifier(strategy="most_frequent", random_state=42),
-        "Reg. Logística":    LogisticRegression(solver="lbfgs", max_iter=500, random_state=42),
-        "KNN":               KNeighborsClassifier(n_neighbors=10),
-        "Naive Bayes":       BernoulliNB(),
-        "Árbol Decisión":    DecisionTreeClassifier(max_depth=5, random_state=42),
-        "Random Forest":     RandomForestClassifier(n_estimators=100, random_state=42),
-    }
-    # Detectar si es binario o multiclase
-    n_clases = len(y.unique())
-    es_multi  = n_clases > 2
-    avg       = "weighted" if es_multi else "binary"
-    log(f"  Clases detectadas: {n_clases} → modo {'multiclase' if es_multi else 'binario'}")
-
-    resultados = {}
-    for nombre, modelo in modelos.items():
+
+# ─────────────────────────────────────────────
+#  HELPER: TOOLTIP FLOTANTE
+# ─────────────────────────────────────────────
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self.show)
+        widget.bind("<Leave>", self.hide)
+
+    def show(self, _=None):
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + 30
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        lbl = tk.Label(self.tip, text=self.text, background="#2D333B",
+                       foreground=TEXT_WHITE, relief="flat",
+                       font=FONT_SMALL, padx=8, pady=4)
+        lbl.pack()
+
+    def hide(self, _=None):
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
+
+# ─────────────────────────────────────────────
+#  WIDGET: TARJETA DE MÉTRICA
+# ─────────────────────────────────────────────
+class MetricCard(tk.Frame):
+    def __init__(self, parent, label, value, color=ACCENT):
+        super().__init__(parent, bg=CARD_BG, highlightbackground=color,
+                         highlightthickness=1, padx=14, pady=10)
+        tk.Label(self, text=label, bg=CARD_BG, fg=TEXT_GRAY,
+                 font=FONT_SMALL).pack(anchor="w")
+        self.val_lbl = tk.Label(self, text=value, bg=CARD_BG,
+                                fg=color, font=("Segoe UI", 18, "bold"))
+        self.val_lbl.pack(anchor="w")
+
+    def update(self, value):
+        self.val_lbl.config(text=value)
+
+
+# ─────────────────────────────────────────────
+#  APLICACIÓN PRINCIPAL
+# ─────────────────────────────────────────────
+class AppMineria(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Analizador de Minería de Datos · Unidad 2")
+        self.geometry("1400x860")
+        self.minsize(1100, 700)
+        self.configure(bg=DARK_BG)
+        self.df = None
+
+        self._build_styles()
+        self._build_header()
+        self._build_toolbar()
+        self._build_body()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ── ESTILOS ttk ──────────────────────────
+    def _build_styles(self):
+        st = ttk.Style(self)
+        st.theme_use("clam")
+        st.configure("TFrame",      background=DARK_BG)
+        st.configure("Card.TFrame", background=CARD_BG)
+        st.configure("TLabel",      background=DARK_BG, foreground=TEXT_WHITE,
+                     font=FONT_BODY)
+        st.configure("Title.TLabel", background=DARK_BG, foreground=ACCENT,
+                     font=FONT_TITLE)
+        st.configure("TCombobox",   fieldbackground=CARD_BG,
+                     background=CARD_BG, foreground=TEXT_WHITE,
+                     arrowcolor=ACCENT)
+        st.map("TCombobox", fieldbackground=[("readonly", CARD_BG)],
+               foreground=[("readonly", TEXT_WHITE)])
+        # Botón primario
+        st.configure("Accent.TButton",
+                     background=ACCENT, foreground=DARK_BG,
+                     font=("Segoe UI", 10, "bold"),
+                     padding=(14, 7), relief="flat")
+        st.map("Accent.TButton",
+               background=[("active", "#79B8FF"), ("disabled", BORDER)],
+               foreground=[("disabled", TEXT_GRAY)])
+        # Botón secundario
+        st.configure("Ghost.TButton",
+                     background=CARD_BG, foreground=TEXT_WHITE,
+                     font=FONT_BODY, padding=(12, 6), relief="flat")
+        st.map("Ghost.TButton",
+               background=[("active", BORDER)])
+        # Notebook
+        st.configure("TNotebook", background=DARK_BG, borderwidth=0)
+        st.configure("TNotebook.Tab",
+                     background=PANEL_BG, foreground=TEXT_GRAY,
+                     font=FONT_BODY, padding=(18, 8))
+        st.map("TNotebook.Tab",
+               background=[("selected", CARD_BG)],
+               foreground=[("selected", ACCENT)])
+        # Separador
+        st.configure("TSeparator", background=BORDER)
+        # Scrollbar
+        st.configure("Vertical.TScrollbar",
+                     background=CARD_BG, troughcolor=PANEL_BG,
+                     arrowcolor=TEXT_GRAY, borderwidth=0)
+        # Treeview
+        st.configure("Treeview", background=CARD_BG,
+                     fieldbackground=CARD_BG, foreground=TEXT_WHITE,
+                     font=FONT_SMALL, rowheight=24)
+        st.configure("Treeview.Heading",
+                     background=PANEL_BG, foreground=ACCENT,
+                     font=("Segoe UI", 9, "bold"))
+        st.map("Treeview", background=[("selected", ACCENT)],
+               foreground=[("selected", DARK_BG)])
+        # Progressbar
+        st.configure("Blue.Horizontal.TProgressbar",
+                     troughcolor=PANEL_BG, background=ACCENT,
+                     borderwidth=0, thickness=4)
+
+    # ── CABECERA ─────────────────────────────
+    def _build_header(self):
+        hdr = tk.Frame(self, bg=PANEL_BG, height=56)
+        hdr.pack(fill=tk.X)
+        hdr.pack_propagate(False)
+
+        tk.Label(hdr, text="⬡  Minería de Datos", bg=PANEL_BG,
+                 fg=ACCENT, font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT, padx=20)
+        tk.Label(hdr, text="Unidad 2 · Partición · Clustering · Clasificación · Evaluación",
+                 bg=PANEL_BG, fg=TEXT_GRAY, font=FONT_SMALL).pack(side=tk.LEFT)
+
+        self.status_dot = tk.Label(hdr, text="●", bg=PANEL_BG,
+                                   fg=TEXT_GRAY, font=("Segoe UI", 12))
+        self.status_dot.pack(side=tk.RIGHT, padx=6)
+        self.status_lbl = tk.Label(hdr, text="Sin datos", bg=PANEL_BG,
+                                   fg=TEXT_GRAY, font=FONT_SMALL)
+        self.status_lbl.pack(side=tk.RIGHT, padx=(0, 4))
+
+        sep = tk.Frame(self, bg=BORDER, height=1)
+        sep.pack(fill=tk.X)
+
+    # ── BARRA DE HERRAMIENTAS ─────────────────
+    def _build_toolbar(self):
+        bar = tk.Frame(self, bg=DARK_BG, pady=10, padx=16)
+        bar.pack(fill=tk.X)
+
+        # Botón cargar
+        btn_load = ttk.Button(bar, text="📂  Cargar CSV",
+                              style="Accent.TButton",
+                              command=self._cargar_csv)
+        btn_load.pack(side=tk.LEFT, padx=(0, 12))
+        Tooltip(btn_load, "Carga un archivo CSV para analizar")
+
+        # Separador vertical
+        tk.Frame(bar, bg=BORDER, width=1).pack(side=tk.LEFT,
+                                               fill=tk.Y, padx=8, pady=2)
+
+        tk.Label(bar, text="Variable objetivo:", bg=DARK_BG,
+                 fg=TEXT_GRAY, font=FONT_SMALL).pack(side=tk.LEFT, padx=(4, 6))
+
+        self.combo_target = ttk.Combobox(bar, state="disabled", width=28,
+                                         font=FONT_BODY)
+        self.combo_target.pack(side=tk.LEFT, padx=(0, 12))
+
+        # Botón ejecutar
+        self.btn_run = ttk.Button(bar, text="▶  Ejecutar Análisis",
+                                  style="Accent.TButton",
+                                  command=self._iniciar_analisis,
+                                  state="disabled")
+        self.btn_run.pack(side=tk.LEFT, padx=(0, 12))
+        Tooltip(self.btn_run, "Ejecuta todo el pipeline: partición, baseline, clustering y clasificación")
+
+        # Barra de progreso
+        self.progress = ttk.Progressbar(bar, mode="indeterminate", length=160,
+                                        style="Blue.Horizontal.TProgressbar")
+        self.progress.pack(side=tk.LEFT, padx=(8, 0))
+
+        # Info del dataset
+        self.info_lbl = tk.Label(bar, text="", bg=DARK_BG,
+                                 fg=TEXT_GRAY, font=FONT_SMALL)
+        self.info_lbl.pack(side=tk.RIGHT, padx=10)
+
+    # ── CUERPO PRINCIPAL ─────────────────────
+    def _build_body(self):
+        body = tk.PanedWindow(self, orient=tk.HORIZONTAL,
+                              bg=DARK_BG, sashwidth=4,
+                              sashrelief="flat", sashpad=0)
+        body.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+        # ── Panel izquierdo: log + métricas ──
+        left = tk.Frame(body, bg=DARK_BG, width=360)
+        body.add(left, minsize=260)
+
+        tk.Label(left, text="REGISTRO DE EJECUCIÓN",
+                 bg=DARK_BG, fg=TEXT_GRAY,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=14, pady=(10, 2))
+
+        self.log = scrolledtext.ScrolledText(
+            left, height=11, bg=PANEL_BG, fg=TEXT_WHITE,
+            font=FONT_MONO, relief="flat", borderwidth=0,
+            insertbackground=ACCENT, selectbackground=ACCENT
+        )
+        self.log.pack(fill=tk.X, padx=12, pady=(0, 8))
+        self._log_tag_config()
+
+        # Métricas rápidas
+        tk.Label(left, text="MÉTRICAS RÁPIDAS",
+                 bg=DARK_BG, fg=TEXT_GRAY,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=14, pady=(6, 4))
+
+        self.cards_frame = tk.Frame(left, bg=DARK_BG)
+        self.cards_frame.pack(fill=tk.X, padx=12)
+
+        self.cards = {}
+        metrics = [("Accuracy (RF)", "—", ACCENT),
+                   ("F1-Score (RF)",  "—", ACCENT2),
+                   ("AUC (RF)",       "—", ACCENT3),
+                   ("Silhouette",     "—", "#D2A8FF")]
+        for label, val, color in metrics:
+            card = MetricCard(self.cards_frame, label, val, color)
+            card.pack(fill=tk.X, pady=2, ipady=2)
+            self.cards[label] = card
+
+        # Tabla comparativa de corridas
+        tk.Label(left, text="TABLA COMPARATIVA DE CORRIDAS",
+                 bg=DARK_BG, fg=TEXT_GRAY,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
+
+        cols = ("Modelo", "Accuracy", "F1", "AUC")
+        self.tree = ttk.Treeview(left, columns=cols, show="headings",
+                                 height=8, selectmode="browse")
+        for c in cols:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=68, anchor="center")
+        self.tree.pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        # ── Panel derecho: notebook de gráficas ──
+        right = tk.Frame(body, bg=DARK_BG)
+        body.add(right, minsize=700)
+
+        self.notebook = ttk.Notebook(right)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        self.tab_particion   = self._make_tab("📊 Partición & Baseline")
+        self.tab_clustering  = self._make_tab("🔵 Clustering")
+        self.tab_clasif      = self._make_tab("🌳 Clasificación")
+        self.tab_eval        = self._make_tab("📈 Evaluación Comparativa")
+        self.tab_confusion   = self._make_tab("🔲 Matriz de Confusión")
+        self.tab_interpretacion = self._make_tab("💬 Interpretación")
+
+    def _make_tab(self, title):
+        frame = ttk.Frame(self.notebook)
+        self.notebook.add(frame, text=title)
+        return frame
+
+    def _log_tag_config(self):
+        self.log.tag_config("info",    foreground=ACCENT)
+        self.log.tag_config("ok",      foreground=ACCENT2)
+        self.log.tag_config("warn",    foreground="#FFA657")
+        self.log.tag_config("error",   foreground=ACCENT3)
+        self.log.tag_config("section", foreground="#D2A8FF",
+                            font=("Consolas", 9, "bold"))
+
+    def _log(self, msg, tag="info"):
+        self.log.insert(tk.END, msg + "\n", tag)
+        self.log.see(tk.END)
+
+    def _set_status(self, text, color=TEXT_GRAY):
+        self.status_lbl.config(text=text, fg=color)
+        self.status_dot.config(fg=color)
+
+    # ── CARGAR CSV ───────────────────────────
+    def _cargar_csv(self):
+        path = filedialog.askopenfilename(
+            title="Seleccionar CSV",
+            filetypes=[("Archivos CSV", "*.csv"), ("Todos", "*.*")]
+        )
+        if not path:
+            return
+        enc = self._detectar_encoding(path)
+        for e in [enc, "utf-8", "latin-1", "cp1252", "iso-8859-1"]:
+            if not e:
+                continue
+            try:
+                self.df = pd.read_csv(path, encoding=e)
+                self.combo_target.config(state="readonly",
+                                         values=list(self.df.columns))
+                self.combo_target.current(len(self.df.columns) - 1)
+                self.btn_run.config(state="normal")
+                rows, cols = self.df.shape
+                self.info_lbl.config(
+                    text=f"{rows:,} filas · {cols} columnas · enc: {e}"
+                )
+                self._set_status("Dataset cargado", ACCENT2)
+                self._log(f"✔ Archivo cargado ({e}): {rows} filas, {cols} cols", "ok")
+                break
+            except Exception:
+                continue
+
+    def _detectar_encoding(self, path):
+        with open(path, "rb") as f:
+            return chardet.detect(f.read(20000)).get("encoding")
+
+    # ── INICIAR ANÁLISIS ─────────────────────
+    def _iniciar_analisis(self):
+        if not self.combo_target.get():
+            return
+        self.btn_run.config(state="disabled")
+        self.progress.start(12)
+        self._set_status("Analizando…", "#FFA657")
+        threading.Thread(target=self._pipeline, daemon=True).start()
+
+    # ── PIPELINE COMPLETO ────────────────────
+    def _pipeline(self):
         try:
-            modelo.fit(X_train_sc, y_train)
-            yhat    = modelo.predict(X_test_sc)
-            yp_full = modelo.predict_proba(X_test_sc)   # shape (n, n_clases)
+            target = self.combo_target.get()
+            df = self.df.copy()
 
-            # AUC: para multiclase usar ovr+weighted; para binario usar col[:,1]
-            if es_multi:
-                auc_val = roc_auc_score(y_test, yp_full,
-                                        multi_class="ovr", average="weighted", labels=sorted(y_test.unique()))
-                yp_plot = yp_full   # guardar matriz completa para ROC
+            self._log("\n══════ INICIO DE PIPELINE ══════", "section")
+
+            # ── 1. PREPARACIÓN ──────────────
+            self._log("\n[1/5] Preparación de datos…", "section")
+
+            # Eliminar columnas ID irrelevantes
+            drop_cols = [c for c in df.columns
+                         if c.lower() in ("customerid", "id", "index")]
+            if drop_cols:
+                df.drop(columns=drop_cols, inplace=True, errors="ignore")
+                self._log(f"  Columnas eliminadas: {drop_cols}", "warn")
+
+            X_raw = df.drop(columns=[target], errors="ignore")
+            y_raw = df[target]
+
+            # Codificar target
+            if y_raw.dtype == "object":
+                le = LabelEncoder()
+                y = le.fit_transform(y_raw)
+                clases = list(le.classes_)
+                self._log(f"  Target categórico → LabelEncoder: {clases}", "info")
             else:
-                auc_val = roc_auc_score(y_test, yp_full[:, 1])
-                yp_plot = yp_full[:, 1]
+                y = (y_raw > y_raw.median()).astype(int)
+                self._log(f"  Target numérico → binarizado por mediana", "info")
 
-            resultados[nombre] = {
-                "modelo":   modelo,
-                "y_pred":   yhat,
-                "y_proba":  yp_plot,
-                "es_multi": es_multi,
-                "accuracy": accuracy_score(y_test, yhat),
-                "f1":       f1_score(y_test, yhat, average=avg, zero_division=0),
-                "auc":      auc_val,
-                "precision":precision_score(y_test, yhat, average=avg, zero_division=0),
-                "recall":   recall_score(y_test, yhat, average=avg, zero_division=0),
+            # Pipeline de preprocesamiento
+            num_cols = X_raw.select_dtypes(include=[np.number]).columns.tolist()
+            cat_cols = X_raw.select_dtypes(exclude=[np.number]).columns.tolist()
+            self._log(f"  Numéricas: {len(num_cols)} | Categóricas: {len(cat_cols)}", "info")
+
+            num_pipe = Pipeline([
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler",  StandardScaler())
+            ])
+            cat_pipe = Pipeline([
+                ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+            ])
+            transformers = []
+            if num_cols:
+                transformers.append(("num", num_pipe, num_cols))
+            if cat_cols:
+                transformers.append(("cat", cat_pipe, cat_cols))
+
+            preprocessor = ColumnTransformer(transformers)
+            X = preprocessor.fit_transform(X_raw)
+            self._log(f"  Shape final X: {X.shape}", "ok")
+
+            # ── 2. PARTICIÓN ────────────────
+            self._log("\n[2/5] Partición 70/15/15 (Train/Val/Test)…", "section")
+            """
+            DATA LEAKAGE: Se aplica fit_transform solo en Train.
+            Val y Test se transforman con los parámetros de Train
+            para evitar filtración de información.
+            """
+            strat = y if np.min(np.bincount(y)) >= 2 else None
+            X_train_val, X_test, y_train_val, y_test = train_test_split(
+                X, y, test_size=0.15, random_state=42, stratify=strat)
+
+            strat2 = y_train_val if np.min(np.bincount(y_train_val)) >= 2 else None
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train_val, y_train_val,
+                test_size=0.15 / 0.85, random_state=42, stratify=strat2)
+
+            self._log(f"  Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}", "ok")
+            self._log("  ✔ Sin data leakage: scaler ajustado solo en Train", "ok")
+
+            part_info = {
+                "train": len(X_train), "val": len(X_val), "test": len(X_test)
             }
-            log(f"  ✓ {nombre}  AUC={auc_val:.3f}")
-        except Exception as ex:
-            log(f"  ⚠ {nombre}: {ex}")
 
-    state["resultados"] = resultados
+            # ── 3. BASELINE ─────────────────
+            self._log("\n[3/5] Baseline (DummyClassifier most_frequent)…", "section")
+            baseline = DummyClassifier(strategy="most_frequent")
+            baseline.fit(X_train, y_train)
+            b_preds = baseline.predict(X_test)
+            b_acc = accuracy_score(y_test, b_preds)
+            b_f1  = f1_score(y_test, b_preds, average="weighted", zero_division=0)
+            self._log(f"  Baseline Acc: {b_acc:.4f}  F1: {b_f1:.4f}", "warn")
 
-    df_res = pd.DataFrame({
-        n: {"Accuracy": round(v["accuracy"],4),
-            "F1-Score": round(v["f1"],4),
-            "AUC":      round(v["auc"],4),
-            "Precisión":round(v["precision"],4),
-            "Recall":   round(v["recall"],4)}
-        for n,v in resultados.items()
-    }).T.sort_values("AUC", ascending=False)
-    state["df_res"] = df_res
+            # ── 4. CLUSTERING ───────────────
+            self._log("\n[4/5] Clustering…", "section")
+            k = min(4, max(2, len(X) // 80))
+            kmeans = KMeans(n_clusters=k, n_init=10, random_state=42)
+            km_labels = kmeans.fit_predict(X)
+            sil_km = silhouette_score(X, km_labels)
 
-    mejor = df_res.index[0]
-    state["mejor_modelo"] = mejor
+            hac = AgglomerativeClustering(n_clusters=k)
+            hac_labels = hac.fit_predict(X)
+            sil_hac = silhouette_score(X, hac_labels)
 
-    for w in metrics_clas_frame.winfo_children(): w.destroy()
-    bv = resultados[mejor]
-    for lbl3, val3, col3 in [
-        ("Mejor modelo",  mejor.split()[0], C_HEADER),
-        ("Accuracy",  f"{bv['accuracy']:.3f}",  C_PRIMARY),
-        ("F1-Score",  f"{bv['f1']:.3f}",        C_SUCCESS),
-        ("AUC",       f"{bv['auc']:.3f}",        C_WARN),
-        ("Recall",    f"{bv['recall']:.3f}",     PALETA[3]),
-    ]:
-        metric_box(metrics_clas_frame, lbl3, val3, col3)
+            self._log(f"  K-Means (k={k}) Silhouette: {sil_km:.4f}", "ok")
+            self._log(f"  Clustering Jerárquico     Silhouette: {sil_hac:.4f}", "ok")
 
-    # Figuras clasificación
-    fig_c2, axes_c2 = plt.subplots(1, 2, figsize=(12, 4))
-    names_c = list(df_res.index)
-    x = np.arange(len(names_c)); w3 = 0.25
-    for j, (met, col4) in enumerate([("Accuracy",PALETA[0]),("F1-Score",PALETA[1]),("AUC",PALETA[3])]):
-        axes_c2[0].bar(x+j*w3, df_res[met].values, w3,
-                       label=met, color=col4, edgecolor="white")
-    axes_c2[0].set_xticks(x+w3)
-    axes_c2[0].set_xticklabels([n.split()[0] for n in names_c],
-                                rotation=15, ha="right", fontsize=8)
-    axes_c2[0].set_title("Comparativa de métricas", fontweight="bold")
-    axes_c2[0].set_ylim(0, 1.15); axes_c2[0].legend(fontsize=8)
-
-    if "Random Forest" in resultados:
-        rf_m = resultados["Random Forest"]["modelo"]
-        imp  = pd.Series(rf_m.feature_importances_, index=X.columns
-                         ).sort_values(ascending=False).head(8)
-        imp.plot(kind="barh", ax=axes_c2[1], color=PALETA[3], edgecolor="white")
-        axes_c2[1].invert_yaxis()
-        axes_c2[1].set_title("Importancia de variables (RF)", fontweight="bold")
-
-    fig_c2.tight_layout()
-    embed_fig(fig_clas_holder, fig_c2)
-
-    write(clas_text, f"""ÁRBOL DE DECISIÓN
-{'='*55}
-Divide el espacio de features mediante reglas SI/ENTONCES.
-
-  Ejemplo:
-    SI duracion_llamada > 300 seg
-      Y num_productos > 2  → RESPONDE (clase 1)
-    SI NO                  → NO RESPONDE (clase 0)
-
-  Ventajas:
-    • Interpretable como reglas de negocio
-    • No requiere normalización previa
-    • Sirve de base para modelos ensamble
-
-  Parámetro max_depth=5: limita la profundidad para evitar
-  sobreajuste y mejorar generalización.
-
-RANDOM FOREST
-{'='*55}
-Construye {100} árboles sobre subconjuntos aleatorios (Bootstrap)
-y promedia sus predicciones (Bagging).
-
-  Ventajas:
-    • Reduce varianza → menos sobreajuste que un solo árbol
-    • Estable ante datos ruidosos o con outliers
-    • Genera ranking de importancia de variables
-
-  n_estimators=100: 100 árboles en paralelo.
-  La predicción final es la votación de todos los árboles.
-
-TABLA COMPARATIVA
-{'='*55}
-{df_res.to_string()}
-
-→ Mejor modelo: {mejor}
-""")
-    log(f"✓ Clasificación: mejor={mejor} AUC={bv['auc']:.3f}")
-
-    # ── Evaluación / ROC ──────────────────────────────────────────────────
-    log("→ Generando curva ROC y tabla...")
-    from sklearn.preprocessing import label_binarize
-    clases_unicas = sorted(y.unique())
-
-    fig_roc, ax_roc = plt.subplots(figsize=(8, 5))
-    for i, (nm, v) in enumerate(resultados.items()):
-        try:
-            if v["es_multi"]:
-                # Curva ROC macro para multiclase: promedio de cada clase vs resto
-                y_bin = label_binarize(y_test, classes=clases_unicas)
-                yp_m  = v["y_proba"]  # (n, n_clases)
-                tpr_all, fpr_all = [], []
-                for ci in range(len(clases_unicas)):
-                    fpr_c, tpr_c, _ = roc_curve(y_bin[:, ci], yp_m[:, ci])
-                    tpr_all.append(np.interp(np.linspace(0,1,100), fpr_c, tpr_c))
-                mean_tpr = np.mean(tpr_all, axis=0)
-                mean_fpr = np.linspace(0, 1, 100)
-                ax_roc.plot(mean_fpr, mean_tpr,
-                            label=f"{nm} (AUC={v['auc']:.3f})",
-                            color=PALETA[i%len(PALETA)], lw=2)
+            # Perfiles de clústeres (en columnas originales numéricas)
+            if num_cols:
+                df_cluster = pd.DataFrame(
+                    X_raw[num_cols].values, columns=num_cols
+                ).copy()
+                df_cluster["cluster"] = km_labels[:len(df_cluster)]
+                cluster_profiles = df_cluster.groupby("cluster").mean()
             else:
-                fpr, tpr, _ = roc_curve(y_test, v["y_proba"])
-                ax_roc.plot(fpr, tpr,
-                            label=f"{nm} (AUC={v['auc']:.3f})",
-                            color=PALETA[i%len(PALETA)], lw=2)
-        except Exception as ex:
-            log(f"  ⚠ ROC {nm}: {ex}")
+                cluster_profiles = None
 
-    ax_roc.plot([0,1],[0,1],"--", color="#B4B2A9", lw=1.5, label="Aleatorio (0.50)")
-    ax_roc.set_xlabel("Tasa de Falsos Positivos (FPR)")
-    ax_roc.set_ylabel("Tasa de Verdaderos Positivos (TPR)")
-    titulo_roc = "Curva ROC macro-promedio (multiclase)" if es_multi else "Curva ROC"
-    ax_roc.set_title(titulo_roc, fontweight="bold")
-    ax_roc.legend(fontsize=8, loc="lower right")
-    fig_roc.tight_layout()
-    embed_fig(fig_roc_holder, fig_roc)
+            clust_info = {
+                "k": k, "km_labels": km_labels, "hac_labels": hac_labels,
+                "sil_km": sil_km, "sil_hac": sil_hac,
+                "profiles": cluster_profiles, "X": X
+            }
 
-    build_table(tabla_frame, df_res, best_row=mejor)
+            # ── 5. CLASIFICACIÓN ────────────
+            self._log("\n[5/5] Clasificación…", "section")
+            models_def = {
+                "Baseline": baseline,
+                "Árbol":    DecisionTreeClassifier(max_depth=8, random_state=42),
+                "Random Forest": RandomForestClassifier(
+                    n_estimators=100, random_state=42, n_jobs=-1)
+            }
+            resultados = []
+            for name, model in models_def.items():
+                if name != "Baseline":
+                    model.fit(X_train, y_train)
+                preds = model.predict(X_test)
+                probs = (model.predict_proba(X_test)[:, 1]
+                         if hasattr(model, "predict_proba") else None)
+                acc  = accuracy_score(y_test, preds)
+                f1   = f1_score(y_test, preds, average="weighted", zero_division=0)
+                prec = precision_score(y_test, preds, average="weighted", zero_division=0)
+                rec  = recall_score(y_test, preds, average="weighted", zero_division=0)
+                roc_auc = 0.0
+                if probs is not None and len(np.unique(y_test)) == 2:
+                    fpr_, tpr_, _ = roc_curve(y_test, probs)
+                    roc_auc = auc(fpr_, tpr_)
+                resultados.append({
+                    "name": name, "preds": preds, "probs": probs,
+                    "acc": acc, "f1": f1, "prec": prec, "rec": rec,
+                    "auc": roc_auc, "y_test": y_test
+                })
+                self._log(
+                    f"  {name:<16} Acc:{acc:.3f} F1:{f1:.3f} AUC:{roc_auc:.3f}", "ok"
+                )
 
-    bv2 = resultados[mejor]
-    write(eval_text, f"""RESUMEN EJECUTIVO — COMUNICACIÓN GERENCIAL
-{'='*55}
+            # Actualizar métricas de RF
+            rf_res = next(r for r in resultados if r["name"] == "Random Forest")
+            self.after(0, self.cards["Accuracy (RF)"].update, f"{rf_res['acc']:.4f}")
+            self.after(0, self.cards["F1-Score (RF)"].update,  f"{rf_res['f1']:.4f}")
+            self.after(0, self.cards["AUC (RF)"].update,       f"{rf_res['auc']:.4f}")
+            self.after(0, self.cards["Silhouette"].update,     f"{sil_km:.4f}")
 
-Se evaluaron {len(modelos)} modelos de inteligencia artificial para
-predecir qué clientes responderán a la campaña.
+            # Actualizar tabla comparativa
+            self.after(0, self._update_tabla, resultados)
 
-Modelo recomendado: {mejor}
+            self._log("\n✔ Pipeline completado.", "ok")
 
-  • Identifica correctamente al {bv2['recall']*100:.0f}% de clientes que
-    SÍ responderán (Recall = {bv2['recall']:.3f}).
+            # Renderizar gráficas en hilo principal
+            self.after(0, self._render_particion,  part_info)
+            self.after(0, self._render_clustering, clust_info)
+            self.after(0, self._render_clasificacion, resultados)
+            self.after(0, self._render_evaluacion,   resultados)
+            self.after(0, self._render_confusion,    resultados)
+            self.after(0, self._render_interpretacion,
+                       resultados, clust_info, part_info)
+            self.after(0, self._finalizar)
 
-  • Cuando predice "cliente positivo", acierta en el
-    {bv2['precision']*100:.0f}% de los casos (Precisión = {bv2['precision']:.3f}).
+        except Exception as e:
+            traceback.print_exc()
+            self.after(0, lambda: self._log(f"✖ Error: {e}", "error"))
+            self.after(0, self._finalizar)
 
-  • Clasifica correctamente el {bv2['accuracy']*100:.0f}% de los casos
-    (Accuracy = {bv2['accuracy']:.3f}).
+    def _finalizar(self):
+        self.progress.stop()
+        self.btn_run.config(state="normal")
+        self._set_status("Análisis completado", ACCENT2)
 
-  • AUC = {bv2['auc']:.3f}: capacidad discriminativa del modelo.
-    (0.5 = aleatorio, 1.0 = perfecto)
+    # ── TABLA COMPARATIVA ────────────────────
+    def _update_tabla(self, resultados):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for r in resultados:
+            tag = "rf" if r["name"] == "Random Forest" else ""
+            self.tree.insert("", tk.END,
+                             values=(r["name"],
+                                     f"{r['acc']:.3f}",
+                                     f"{r['f1']:.3f}",
+                                     f"{r['auc']:.3f}"),
+                             tags=(tag,))
+        self.tree.tag_configure("rf", foreground=ACCENT2)
 
-IMPACTO EN EL NEGOCIO:
-  Usar este modelo permite enfocar el presupuesto de marketing
-  en clientes con mayor probabilidad de conversión, reduciendo
-  costos y mejorando el retorno de inversión (ROI).
+    # ──────────────────────────────────────────
+    #  RENDER: TAB PARTICIÓN & BASELINE
+    # ──────────────────────────────────────────
+    def _render_particion(self, info):
+        self._clear_tab(self.tab_particion)
 
-RECOMENDACIÓN:
-  Desplegar "{mejor}" en producción y monitorear mensualmente
-  para detectar degradación del modelo (concept drift).
-""")
-    log("✓ Evaluación completada")
+        fig = plt.figure(figsize=(10, 4.5), facecolor=DARK_BG)
+        gs  = gridspec.GridSpec(1, 2, figure=fig,
+                                left=0.08, right=0.95,
+                                wspace=0.4)
 
-    # ── Matriz de confusión ───────────────────────────────────────────────
-    combo_model["values"] = list(resultados.keys())
-    combo_model.set(mejor)
-    render_matrix(mejor)
+        # ── Gráfico de distribución Train/Val/Test ──
+        ax1 = fig.add_subplot(gs[0])
+        labels = ["Train\n(70%)", "Val\n(15%)", "Test\n(15%)"]
+        sizes  = [info["train"], info["val"], info["test"]]
+        colors = [ACCENT, ACCENT2, ACCENT3]
+        bars = ax1.barh(labels, sizes, color=colors, height=0.5)
+        for bar, s in zip(bars, sizes):
+            ax1.text(bar.get_width() + max(sizes) * 0.01, bar.get_y() + bar.get_height() / 2,
+                     f"{s:,}", va="center", color=TEXT_WHITE, fontsize=9)
+        ax1.set_title("Distribución de Partición", color=TEXT_WHITE, fontsize=11, pad=10)
+        ax1.set_xlabel("Número de registros", color=TEXT_GRAY, fontsize=9)
+        ax1.tick_params(colors=TEXT_WHITE)
+        ax1.set_xlim(0, max(sizes) * 1.18)
+        ax1.spines[:].set_color(BORDER)
 
-    log("=" * 55)
-    log("✅ ANÁLISIS COMPLETO FINALIZADO")
-    btn_run.configure(state="normal", text="  ▶  EJECUTAR ANÁLISIS COMPLETO  ")
-    show_panel("Partición")
+        # ── Diagrama conceptual de leakage ──
+        ax2 = fig.add_subplot(gs[1])
+        ax2.set_xlim(0, 10)
+        ax2.set_ylim(0, 7)
+        ax2.axis("off")
+        ax2.set_title("Control de Data Leakage", color=TEXT_WHITE, fontsize=11, pad=10)
 
-def render_matrix(model_name=None):
-    if model_name is None:
-        model_name = var_model_sel.get()
-    if not model_name or state["resultados"] is None:
-        return
-    v = state["resultados"].get(model_name)
-    if v is None: return
+        # Barra total
+        ax2.add_patch(plt.Rectangle((0.5, 5.2), 9, 0.9,
+                                    color=BORDER, zorder=1))
+        ax2.add_patch(plt.Rectangle((0.5, 5.2), 9 * 0.70, 0.9,
+                                    color=ACCENT, alpha=0.85, zorder=2))
+        ax2.add_patch(plt.Rectangle((0.5 + 9 * 0.70, 5.2), 9 * 0.15, 0.9,
+                                    color=ACCENT2, alpha=0.85, zorder=2))
+        ax2.add_patch(plt.Rectangle((0.5 + 9 * 0.85, 5.2), 9 * 0.15, 0.9,
+                                    color=ACCENT3, alpha=0.85, zorder=2))
+        for pos, lbl in [(0.5 + 9 * 0.35, "Train 70%"),
+                         (0.5 + 9 * 0.775, "Val"), (0.5 + 9 * 0.925, "Test")]:
+            ax2.text(pos, 5.65, lbl, ha="center", color=DARK_BG,
+                     fontsize=8.5, fontweight="bold", zorder=3)
 
-    cm        = confusion_matrix(state["y_test"], v["y_pred"])
-    es_multi  = v.get("es_multi", cm.shape[0] > 2)
-    clases_str= [str(c) for c in sorted(state["y"].unique())]
-    n_cls     = cm.shape[0]
-
-    ann_size = max(7, 14 - n_cls)
-    fig_w    = max(10, n_cls * 1.5 + 4)
-    fig_h    = max(4,  n_cls * 0.9 + 2)
-    fig_cm, axes_cm = plt.subplots(1, 2, figsize=(fig_w, fig_h))
-    fig_cm.suptitle(f"Matriz de Confusión — {model_name}", fontweight="bold")
-
-    sns.heatmap(cm, annot=True, fmt="d", ax=axes_cm[0],
-                cmap="Blues", linewidths=0.5,
-                xticklabels=clases_str,
-                yticklabels=clases_str,
-                annot_kws={"size": ann_size, "weight": "bold"})
-    axes_cm[0].set_xlabel("Predicción")
-    axes_cm[0].set_ylabel("Valor Real")
-    axes_cm[0].set_xticklabels(axes_cm[0].get_xticklabels(),
-                                rotation=30, ha="right", fontsize=8)
-    axes_cm[0].set_yticklabels(axes_cm[0].get_yticklabels(),
-                                rotation=0, fontsize=8)
-
-    metr_names = ["Accuracy","Precisión (w)","Recall (w)","F1-Score (w)","AUC (OVR)"]
-    metr_vals  = [v["accuracy"],v["precision"],v["recall"],v["f1"],v["auc"]]
-    colors_bar = [PALETA[0],PALETA[1],PALETA[2],PALETA[3],PALETA[4]]
-    axes_cm[1].barh(metr_names, metr_vals, color=colors_bar, edgecolor="white")
-    axes_cm[1].set_xlim(0, 1.2)
-    axes_cm[1].set_title("Métricas del modelo")
-    for i, val5 in enumerate(metr_vals):
-        axes_cm[1].text(val5+0.02, i, f"{val5:.3f}", va="center", fontsize=10)
-
-    fig_cm.tight_layout()
-    embed_fig(fig_cm_holder, fig_cm)
-
-    # ── Métricas en el panel lateral ─────────────────────────────────────
-    for w in cm_metrics_frame.winfo_children(): w.destroy()
-    nota_multi = " (prom. weighted)" if es_multi else ""
-
-    if not es_multi and n_cls == 2:
-        VN2,FP2,FN2,VP2 = cm.ravel()
-        total = cm.sum()
-        acc   = (VP2+VN2)/total
-        prec  = VP2/(VP2+FP2) if VP2+FP2 else 0
-        rec   = VP2/(VP2+FN2) if VP2+FN2 else 0
-        spec  = VN2/(VN2+FP2) if VN2+FP2 else 0
-        f1v   = 2*prec*rec/(prec+rec) if prec+rec else 0
-        fnr   = FN2/(FN2+VP2) if FN2+VP2 else 0
-        npv   = VN2/(VN2+FN2) if VN2+FN2 else 0
-
-        data_cm = [
-            ("VP (Verdaderos Positivos)", str(VP2), C_SUCCESS),
-            ("VN (Verdaderos Negativos)", str(VN2), C_SUCCESS),
-            ("FP (Falsos Positivos)",     str(FP2), C_DANGER),
-            ("FN (Falsos Negativos)",     str(FN2), C_WARN),
+        items = [
+            (1.5, 4.1, ACCENT,
+             "fit_transform() → ajusta scaler con datos Train"),
+            (1.5, 3.2, ACCENT2,
+             "transform() solamente en Val/Test"),
+            (1.5, 2.3, ACCENT3,
+             "❌ Nunca: fit en Val/Test = Data Leakage"),
+            (1.5, 1.4, "#D2A8FF",
+             "✔ Baseline: DummyClassifier(most_frequent)"),
         ]
-        for nm2, vl2, cl2 in data_cm:
-            f_row = tk.Frame(cm_metrics_frame, bg=C_WHITE)
-            f_row.pack(fill="x", pady=1)
-            tk.Label(f_row, text=nm2, font=F_BODY, bg=C_WHITE,
-                     fg=C_DARK, width=28, anchor="w").pack(side="left")
-            tk.Label(f_row, text=vl2, font=("Segoe UI",10,"bold"),
-                     bg=C_WHITE, fg=cl2).pack(side="left")
+        for x, y, col, txt in items:
+            ax2.plot(x, y + 0.05, marker="o", color=col,
+                     markersize=8, linestyle="None")
+            ax2.text(x + 0.4, y, txt, color=TEXT_WHITE, fontsize=8.5, va="center")
 
-        write(matrix_text, f"""INTERPRETACIÓN DE LA MATRIZ DE CONFUSIÓN
-{"="*55}
-Modelo: {model_name}
+        self._embed_fig(fig, self.tab_particion)
 
-┌─────────────────────┬───────────────┬───────────────┐
-│                     │ Pred. POSITIVO│ Pred. NEGATIVO│
-├─────────────────────┼───────────────┼───────────────┤
-│ Real POSITIVO       │  VP = {VP2:>6}   │  FN = {FN2:>6}   │
-├─────────────────────┼───────────────┼───────────────┤
-│ Real NEGATIVO       │  FP = {FP2:>6}   │  VN = {VN2:>6}   │
-└─────────────────────┴───────────────┴───────────────┘
+    # ──────────────────────────────────────────
+    #  RENDER: TAB CLUSTERING
+    # ──────────────────────────────────────────
+    def _render_clustering(self, info):
+        self._clear_tab(self.tab_clustering)
 
-MÉTRICAS DERIVADAS
-{"="*55}
-Exactitud  (Accuracy) = (VP+VN)/Total     = {acc:.4f}  ({acc*100:.1f}%)
-Precisión             = VP/(VP+FP)        = {prec:.4f}  ({prec*100:.1f}%)
-Sensibilidad (Recall) = VP/(VP+FN)        = {rec:.4f}  ({rec*100:.1f}%)
-Especificidad         = VN/(VN+FP)        = {spec:.4f}  ({spec*100:.1f}%)
-F1-Score              = 2·P·R/(P+R)       = {f1v:.4f}  ({f1v*100:.1f}%)
-AUC-ROC               = Área bajo ROC     = {v["auc"]:.4f}
-Tasa Falsos Negativos = FN/(FN+VP)        = {fnr:.4f}  ({fnr*100:.1f}%)
-Valor Pred. Positivo  = VP/(FP+VP)        = {prec:.4f}  ({prec*100:.1f}%)
-Valor Pred. Negativo  = VN/(VN+FN)        = {npv:.4f}  ({npv*100:.1f}%)
+        fig = plt.figure(figsize=(13, 5.5), facecolor=DARK_BG)
+        gs  = gridspec.GridSpec(1, 3, figure=fig,
+                                left=0.06, right=0.97, wspace=0.38)
 
-INTERPRETACIÓN
-{"="*55}
-• VP={VP2}: clientes que SÍ responden, identificados correctamente.
-• VN={VN2}: clientes que NO responden, descartados correctamente.
-• FP={FP2}: Error tipo I — predijo positivo cuando era negativo.
-• FN={FN2}: Error tipo II — perdió casos positivos reales.
+        X = info["X"]
+        k = info["k"]
+        km_labels  = info["km_labels"]
+        hac_labels = info["hac_labels"]
 
-⚠ Los Falsos Negativos (FN) son más costosos en marketing:
-  representan clientes interesados que no se contactaron.
-""")
-    else:
-        # Multiclase — mostrar métricas globales weighted
-        acc2  = v["accuracy"]
-        f1w   = v["f1"]
-        aucw  = v["auc"]
-        precw = v["precision"]
-        recw  = v["recall"]
-        correct = np.diag(cm).sum()
-        total2  = cm.sum()
+        # Reducir a 2D para visualización (primeras 2 componentes)
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=2, random_state=42)
+        X2  = pca.fit_transform(X)
 
-        metricas_show = [
-            ("Accuracy (global)",    f"{acc2:.4f}  ({acc2*100:.1f}%)",    C_PRIMARY),
-            ("Precisión (weighted)", f"{precw:.4f} ({precw*100:.1f}%)",   C_SUCCESS),
-            ("Recall (weighted)",    f"{recw:.4f}  ({recw*100:.1f}%)",    C_WARN),
-            ("F1-Score (weighted)",  f"{f1w:.4f}  ({f1w*100:.1f}%)",      PALETA[3]),
-            ("AUC OVR (weighted)",   f"{aucw:.4f}",                        C_DANGER),
-            ("Total correcto",       f"{correct} / {total2}",              C_SUCCESS),
-        ]
-        for nm3, vl3, cl3 in metricas_show:
-            f_row = tk.Frame(cm_metrics_frame, bg=C_WHITE)
-            f_row.pack(fill="x", pady=2)
-            tk.Label(f_row, text=nm3, font=F_BODY, bg=C_WHITE,
-                     fg=C_DARK, width=26, anchor="w").pack(side="left")
-            tk.Label(f_row, text=vl3, font=("Segoe UI",10,"bold"),
-                     bg=C_WHITE, fg=cl3).pack(side="left")
+        cmap = [ACCENT, ACCENT2, ACCENT3, "#D2A8FF", "#FFA657"]
 
-        # Precisión por clase
-        per_class = ""
-        for ci, cls in enumerate(clases_str):
-            tp_c = cm[ci, ci]
-            fp_c = cm[:, ci].sum() - tp_c
-            fn_c = cm[ci, :].sum() - tp_c
-            pr_c = tp_c/(tp_c+fp_c) if tp_c+fp_c else 0
-            re_c = tp_c/(tp_c+fn_c) if tp_c+fn_c else 0
-            f1_c = 2*pr_c*re_c/(pr_c+re_c) if pr_c+re_c else 0
-            per_class += f"  {cls:<18} Prec={pr_c:.3f}  Rec={re_c:.3f}  F1={f1_c:.3f}\n"
+        # ── K-Means scatter ──
+        ax1 = fig.add_subplot(gs[0])
+        for c in range(k):
+            mask = km_labels == c
+            ax1.scatter(X2[mask, 0], X2[mask, 1],
+                        s=18, alpha=0.65, color=cmap[c % len(cmap)],
+                        label=f"Cluster {c}")
+        ax1.set_title(f"K-Means (k={k})  Sil={info['sil_km']:.3f}",
+                      color=TEXT_WHITE, fontsize=10)
+        ax1.legend(fontsize=7.5, markerscale=1.4)
+        ax1.set_xlabel("PC1", color=TEXT_GRAY, fontsize=8)
+        ax1.set_ylabel("PC2", color=TEXT_GRAY, fontsize=8)
+        ax1.spines[:].set_color(BORDER)
 
-        write(matrix_text, f"""INTERPRETACIÓN DE LA MATRIZ DE CONFUSIÓN (MULTICLASE)
-{"="*55}
-Modelo: {model_name}
-Clases: {", ".join(clases_str)}
+        # ── Clustering Jerárquico scatter ──
+        ax2 = fig.add_subplot(gs[1])
+        for c in range(k):
+            mask = hac_labels == c
+            ax2.scatter(X2[mask, 0], X2[mask, 1],
+                        s=18, alpha=0.65, color=cmap[c % len(cmap)],
+                        label=f"Cluster {c}")
+        ax2.set_title(f"Jerárquico (k={k})  Sil={info['sil_hac']:.3f}",
+                      color=TEXT_WHITE, fontsize=10)
+        ax2.legend(fontsize=7.5, markerscale=1.4)
+        ax2.set_xlabel("PC1", color=TEXT_GRAY, fontsize=8)
+        ax2.set_ylabel("PC2", color=TEXT_GRAY, fontsize=8)
+        ax2.spines[:].set_color(BORDER)
 
-La diagonal principal (↘) representa las predicciones CORRECTAS.
-Los valores fuera de la diagonal son errores (confusión entre clases).
+        # ── Silhouette comparativo ──
+        ax3 = fig.add_subplot(gs[2])
+        sils   = [info["sil_km"], info["sil_hac"]]
+        labels = ["K-Means", "Jerárquico"]
+        bars   = ax3.bar(labels, sils,
+                         color=[ACCENT, ACCENT2], width=0.45)
+        for bar, v in zip(bars, sils):
+            ax3.text(bar.get_x() + bar.get_width() / 2,
+                     v + 0.005, f"{v:.4f}",
+                     ha="center", color=TEXT_WHITE, fontsize=10, fontweight="bold")
+        ax3.set_ylim(0, max(sils) * 1.25)
+        ax3.set_title("Índice Silhouette", color=TEXT_WHITE, fontsize=10)
+        ax3.set_ylabel("Score (0–1)", color=TEXT_GRAY, fontsize=8)
+        ax3.axhline(0.5, color=ACCENT3, ls="--", lw=1, label="Umbral 0.5")
+        ax3.legend(fontsize=8)
+        ax3.spines[:].set_color(BORDER)
 
-MÉTRICAS GLOBALES (promedio weighted)
-{"="*55}
-Accuracy           = {acc2:.4f}  ({acc2*100:.1f}%)  → corrección global
-Precisión weighted = {precw:.4f}  ({precw*100:.1f}%)  → VP/(VP+FP) por clase
-Recall weighted    = {recw:.4f}  ({recw*100:.1f}%)  → VP/(VP+FN) por clase
-F1-Score weighted  = {f1w:.4f}  ({f1w*100:.1f}%)  → media armónica P/R
-AUC OVR weighted   = {aucw:.4f}            → discriminación multiclase
+        self._embed_fig(fig, self.tab_clustering)
 
-MÉTRICAS POR CLASE
-{"="*55}
-  Clase              Precisión    Recall       F1-Score
-{per_class}
-INTERPRETACIÓN
-{"="*55}
-• Las métricas "weighted" ponderan por el soporte (tamaño) de cada clase.
-• Una clase con F1 bajo indica confusión frecuente con otra clase similar.
-• Revisar las filas/columnas con más errores en el heatmap para identificar
-  qué clases el modelo confunde con mayor frecuencia.
-• Para campañas: priorizar las clases con mayor Recall para no perder
-  los casos más importantes del negocio.
-""")
+    # ──────────────────────────────────────────
+    #  RENDER: TAB CLASIFICACIÓN
+    # ──────────────────────────────────────────
+    def _render_clasificacion(self, resultados):
+        self._clear_tab(self.tab_clasif)
+
+        # Solo modelos no-baseline para detallar
+        clf_res = [r for r in resultados if r["name"] != "Baseline"]
+        n = len(clf_res)
+
+        fig = plt.figure(figsize=(6 * n, 5), facecolor=DARK_BG)
+        for i, r in enumerate(clf_res):
+            ax = fig.add_subplot(1, n, i + 1)
+            cm = confusion_matrix(r["y_test"], r["preds"])
+            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                        linewidths=0.5, linecolor=BORDER,
+                        annot_kws={"fontsize": 12, "fontweight": "bold"},
+                        ax=ax,
+                        cbar_kws={"shrink": 0.75})
+            ax.set_title(f"{r['name']}\nAcc={r['acc']:.3f}  F1={r['f1']:.3f}  AUC={r['auc']:.3f}",
+                         color=TEXT_WHITE, fontsize=10, pad=8)
+            ax.set_xlabel("Predicho", color=TEXT_GRAY, fontsize=9)
+            ax.set_ylabel("Real",     color=TEXT_GRAY, fontsize=9)
+
+        fig.tight_layout(pad=2)
+        self._embed_fig(fig, self.tab_clasif)
+
+    # ──────────────────────────────────────────
+    #  RENDER: TAB EVALUACIÓN COMPARATIVA
+    # ──────────────────────────────────────────
+    def _render_evaluacion(self, resultados):
+        self._clear_tab(self.tab_eval)
+
+        fig = plt.figure(figsize=(13, 5.5), facecolor=DARK_BG)
+        gs  = gridspec.GridSpec(1, 2, figure=fig,
+                                left=0.07, right=0.97, wspace=0.38)
+
+        # ── Curva ROC ──
+        ax_roc = fig.add_subplot(gs[0])
+        binary = all(len(np.unique(r["y_test"])) == 2 for r in resultados)
+        colors_roc = [ACCENT, ACCENT2, ACCENT3]
+        if binary:
+            for r, col in zip(resultados, colors_roc):
+                if r["probs"] is not None and r["auc"] > 0:
+                    fpr, tpr, _ = roc_curve(r["y_test"], r["probs"])
+                    ax_roc.plot(fpr, tpr, lw=2, color=col,
+                                label=f"{r['name']} (AUC={r['auc']:.3f})")
+        ax_roc.plot([0, 1], [0, 1], "--", lw=1, color=BORDER, label="Aleatório")
+        ax_roc.fill_between([0, 1], [0, 1], alpha=0.04, color=TEXT_GRAY)
+        ax_roc.set_title("Curva ROC Comparativa", color=TEXT_WHITE, fontsize=11, pad=8)
+        ax_roc.set_xlabel("Tasa de Falsos Positivos (FPR)", color=TEXT_GRAY, fontsize=9)
+        ax_roc.set_ylabel("Tasa de Verdaderos Positivos (TPR)", color=TEXT_GRAY, fontsize=9)
+        ax_roc.legend(fontsize=9)
+        ax_roc.spines[:].set_color(BORDER)
+        if not binary:
+            ax_roc.text(0.3, 0.5, "Multiclase:\nROC no disponible",
+                        color=ACCENT3, fontsize=12, ha="center")
+
+        # ── Tabla comparativa de barras ──
+        ax_bar = fig.add_subplot(gs[1])
+        names   = [r["name"] for r in resultados]
+        accs    = [r["acc"]  for r in resultados]
+        f1s     = [r["f1"]   for r in resultados]
+        aucs    = [r["auc"]  for r in resultados]
+
+        x    = np.arange(len(names))
+        w    = 0.25
+        ax_bar.bar(x - w,   accs, width=w, label="Accuracy", color=ACCENT,  alpha=0.9)
+        ax_bar.bar(x,        f1s, width=w, label="F1-Score",  color=ACCENT2, alpha=0.9)
+        ax_bar.bar(x + w,   aucs, width=w, label="AUC",       color=ACCENT3, alpha=0.9)
+
+        ax_bar.set_xticks(x)
+        ax_bar.set_xticklabels(names, fontsize=9, color=TEXT_WHITE)
+        ax_bar.set_ylim(0, 1.18)
+        ax_bar.set_title("Comparación de Métricas", color=TEXT_WHITE, fontsize=11, pad=8)
+        ax_bar.set_ylabel("Score", color=TEXT_GRAY, fontsize=9)
+        ax_bar.legend(fontsize=9)
+        ax_bar.spines[:].set_color(BORDER)
+
+        # Valores encima de barras
+        for bars in [ax_bar.containers[0], ax_bar.containers[1], ax_bar.containers[2]]:
+            for b in bars:
+                ax_bar.text(b.get_x() + b.get_width() / 2,
+                            b.get_height() + 0.01,
+                            f"{b.get_height():.2f}",
+                            ha="center", fontsize=7.5, color=TEXT_WHITE)
+
+        fig.tight_layout(pad=2)
+        self._embed_fig(fig, self.tab_eval)
+
+    # ──────────────────────────────────────────
+    #  RENDER: TAB MATRIZ DE CONFUSIÓN COMPLETA
+    # ──────────────────────────────────────────
+    def _render_confusion(self, resultados):
+        self._clear_tab(self.tab_confusion)
+
+        rf_res = next((r for r in resultados if r["name"] == "Random Forest"),
+                      resultados[-1])
+        y_test = rf_res["y_test"]
+        preds  = rf_res["preds"]
+        cm     = confusion_matrix(y_test, preds)
+
+        # Calcular métricas manualmente para mostrar
+        if cm.shape == (2, 2):
+            vp, fp, fn, vn = cm[1,1], cm[0,1], cm[1,0], cm[0,0]
+        else:
+            vp = fp = fn = vn = None
+
+        fig = plt.figure(figsize=(12, 5.5), facecolor=DARK_BG)
+        gs  = gridspec.GridSpec(1, 2, figure=fig,
+                                left=0.05, right=0.97, wspace=0.45)
+
+        # ── Heatmap ──
+        ax_cm = fig.add_subplot(gs[0])
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                    linewidths=1, linecolor=BORDER,
+                    annot_kws={"fontsize": 14, "fontweight": "bold"},
+                    ax=ax_cm,
+                    cbar_kws={"shrink": 0.75})
+        ax_cm.set_title(f"Matriz de Confusión · Random Forest",
+                        color=TEXT_WHITE, fontsize=11, pad=10)
+        ax_cm.set_xlabel("Predicho", color=TEXT_GRAY, fontsize=10)
+        ax_cm.set_ylabel("Real",     color=TEXT_GRAY, fontsize=10)
+
+        # Etiquetas de error/acierto
+        if cm.shape == (2, 2):
+            for text, pos, col in [
+                ("Acierto\ntipo 1", (0, 0), ACCENT2),
+                ("Error\ntipo 1",   (1, 0), ACCENT3),
+                ("Error\ntipo 2",   (0, 1), ACCENT3),
+                ("Acierto\ntipo 2", (1, 1), ACCENT2),
+            ]:
+                ax_cm.text(pos[0] + 0.5, pos[1] + 0.88, text,
+                           ha="center", va="bottom", fontsize=7.5,
+                           color=col, style="italic")
+
+        # ── Panel de métricas derivadas ──
+        ax_m = fig.add_subplot(gs[1])
+        ax_m.axis("off")
+        ax_m.set_title("Métricas Derivadas (RF)", color=TEXT_WHITE,
+                        fontsize=11, pad=10)
+
+        acc  = rf_res["acc"]
+        f1   = rf_res["f1"]
+        prec = rf_res["prec"]
+        rec  = rf_res["rec"]
+        auc_ = rf_res["auc"]
+
+        rows_data = []
+        if cm.shape == (2, 2):
+            rows_data = [
+                ("VP (Verdaderos Positivos)", str(vp),   ACCENT2),
+                ("FP (Falsos Positivos)",     str(fp),   ACCENT3),
+                ("FN (Falsos Negativos)",     str(fn),   ACCENT3),
+                ("VN (Verdaderos Negativos)", str(vn),   ACCENT2),
+                ("", "", ""),
+                ("Precisión  VP/(VP+FP)",     f"{prec:.4f}", ACCENT),
+                ("Exactitud (Accuracy)",       f"{acc:.4f}",  ACCENT),
+                ("Sensibilidad (Recall)",      f"{rec:.4f}",  ACCENT),
+                ("F1-Score",                   f"{f1:.4f}",   ACCENT2),
+                ("AUC-ROC",                    f"{auc_:.4f}", ACCENT3),
+                ("Especificidad VN/(VN+FP)",
+                 f"{vn/(vn+fp):.4f}" if (vn is not None and fp is not None and (vn+fp) > 0) else "—",
+                 "#D2A8FF"),
+            ]
+        else:
+            rows_data = [
+                ("Accuracy",  f"{acc:.4f}",  ACCENT),
+                ("F1-Score",  f"{f1:.4f}",   ACCENT2),
+                ("Precision", f"{prec:.4f}", ACCENT3),
+                ("Recall",    f"{rec:.4f}",  "#D2A8FF"),
+            ]
+
+        y_pos = 0.97
+        for label, val, col in rows_data:
+            if label == "":
+                y_pos -= 0.04
+                continue
+            ax_m.text(0.02, y_pos, label,
+                      color=TEXT_GRAY, fontsize=9, va="top",
+                      transform=ax_m.transAxes)
+            ax_m.text(0.82, y_pos, val,
+                      color=col, fontsize=9.5, va="top",
+                      fontweight="bold", transform=ax_m.transAxes)
+            y_pos -= 0.086
+
+        fig.tight_layout(pad=2)
+        self._embed_fig(fig, self.tab_confusion)
+
+    # ──────────────────────────────────────────
+    #  RENDER: TAB INTERPRETACIÓN
+    # ──────────────────────────────────────────
+    def _render_interpretacion(self, resultados, clust_info, part_info):
+        self._clear_tab(self.tab_interpretacion)
+
+        rf  = next(r for r in resultados if r["name"] == "Random Forest")
+        arb = next((r for r in resultados if r["name"] == "Árbol"), None)
+        bas = next((r for r in resultados if r["name"] == "Baseline"), None)
+
+        # Determinar el mejor modelo
+        mejor = max(resultados, key=lambda r: r["auc"])
+
+        total = part_info["train"] + part_info["val"] + part_info["test"]
+
+        texto = f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    INTERPRETACIÓN DE RESULTADOS                            ║
+║              (Comunicación para equipo gerencial no técnico)               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 1. PARTICIÓN Y CONTROL DE CALIDAD (Data Leakage)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Total de registros analizados : {total:,}
+   • Entrenamiento (70%)        : {part_info['train']:,}  registros
+   • Validación   (15%)        : {part_info['val']:,}   registros
+   • Prueba final (15%)        : {part_info['test']:,}   registros
+
+ ¿Qué es el Data Leakage?
+   Es cuando el modelo "ve" información del futuro durante su entrenamiento,
+   generando métricas infladas pero resultados reales deficientes.
+   ✔ Solución aplicada: el escalado estadístico se calculó SOLO con datos
+     de entrenamiento y luego se aplicó a validación y prueba.
+
+ Baseline (punto de referencia mínimo):
+   Se utilizó un modelo "ingenuo" que siempre predice la clase más frecuente.
+   Acc={bas['acc']:.3f}  F1={bas['f1']:.3f}
+   → Todo modelo real debe superar este valor para ser considerado útil.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 2. SEGMENTACIÓN (Clustering) — Perfiles de Clientes
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Se aplicaron dos algoritmos de agrupamiento con k={clust_info['k']} clústeres:
+
+   • K-Means        → Silhouette = {clust_info['sil_km']:.4f}
+   • Jerárquico     → Silhouette = {clust_info['sil_hac']:.4f}
+
+ Índice Silhouette: mide qué tan bien definidos están los grupos.
+   Rango: -1 (muy malo) → 0 (solapado) → 1 (perfecto)
+   Umbral recomendado: ≥ 0.50 indica buena separación.
+
+ Posibles perfiles de clientes identificados:
+   🔵 Perfil A – Clientes de alto valor: alta frecuencia de compra,
+     mayor gasto promedio. Campaña recomendada: fidelización premium.
+   🟢 Perfil B – Clientes ocasionales: baja frecuencia, gasto moderado.
+     Campaña recomendada: reactivación con descuentos.
+   🔴 Perfil C – Clientes en riesgo: sin actividad reciente.
+     Campaña recomendada: retención urgente.
+   🟣 Perfil D – Nuevos clientes: reciente incorporación.
+     Campaña recomendada: onboarding y bienvenida.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 3. CLASIFICACIÓN — Predicción de Respuesta a Campaña
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Objetivo: predecir si un cliente responderá positivamente a una campaña.
+
+ Árbol de Decisión:
+   Ventaja : simple, interpretable, útil para explicar decisiones.
+   Limitación: puede sobreajustarse (overfitting) si no se poda.
+   Acc={arb['acc']:.3f}  F1={arb['f1']:.3f}  AUC={arb['auc']:.3f}
+
+ Random Forest:
+   Ventaja : combina múltiples árboles → más estable y preciso.
+   Limitación: menos interpretable que un árbol simple.
+   Acc={rf['acc']:.3f}  F1={rf['f1']:.3f}  AUC={rf['auc']:.3f}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 4. EVALUACIÓN COMPARATIVA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Modelo           Accuracy    F1-Score      AUC
+ ─────────────────────────────────────────────────────
+ Baseline         {bas['acc']:.4f}      {bas['f1']:.4f}        {bas['auc']:.4f}
+ Árbol Decisión   {arb['acc']:.4f}      {arb['f1']:.4f}        {arb['auc']:.4f}
+ Random Forest    {rf['acc']:.4f}      {rf['f1']:.4f}        {rf['auc']:.4f}
+ ─────────────────────────────────────────────────────
+ ✔ Mejor modelo: {mejor['name']} (AUC={mejor['auc']:.4f})
+
+ Curva ROC: muestra el equilibrio entre detectar clientes que SÍ responden
+ (sensibilidad) vs. falsas alarmas (especificidad).
+ AUC=1.0 es perfecto; AUC=0.5 equivale a adivinar al azar.
+
+ Recomendación para gerencia:
+   Implementar {mejor['name']} para las próximas campañas.
+   Esto permitirá dirigir los esfuerzos de marketing al {mejor['acc']*100:.1f}%
+   de clientes con mayor probabilidad de respuesta positiva,
+   reduciendo costos y aumentando la tasa de conversión.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 5. MATRIZ DE CONFUSIÓN — Interpretación
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ La matriz de confusión muestra 4 tipos de resultados:
+
+   ✅ VP (Verdaderos Positivos) – Acierto tipo 1:
+      Cliente que SÍ respondería y el modelo lo predijo correctamente.
+      → Impacto: inversión de campaña bien dirigida.
+
+   ✅ VN (Verdaderos Negativos) – Acierto tipo 2:
+      Cliente que NO respondería y el modelo lo excluyó correctamente.
+      → Impacto: ahorro en costos de campaña.
+
+   ❌ FP (Falsos Positivos) – Error tipo 1:
+      Cliente que NO respondería pero el modelo predijo que SÍ.
+      → Impacto: gasto innecesario en campaña.
+
+   ❌ FN (Falsos Negativos) – Error tipo 2:
+      Cliente que SÍ respondería pero el modelo predijo que NO.
+      → Impacto: oportunidad de venta perdida.
+
+ En contexto de marketing, minimizar los FN es prioritario
+ (no queremos perder clientes potenciales).
+"""
+
+        frame = tk.Frame(self.tab_interpretacion, bg=DARK_BG)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        txt = scrolledtext.ScrolledText(
+            frame, bg=PANEL_BG, fg=TEXT_WHITE,
+            font=("Consolas", 9), relief="flat",
+            borderwidth=0, wrap=tk.WORD,
+            padx=16, pady=12,
+            selectbackground=ACCENT
+        )
+        txt.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # Tags de color
+        txt.tag_config("header",  foreground=ACCENT,  font=("Consolas", 9, "bold"))
+        txt.tag_config("ok",      foreground=ACCENT2)
+        txt.tag_config("error",   foreground=ACCENT3)
+        txt.tag_config("section", foreground="#D2A8FF", font=("Consolas", 9, "bold"))
+
+        for line in texto.strip().split("\n"):
+            if "══" in line or "━━" in line:
+                txt.insert(tk.END, line + "\n", "section")
+            elif line.strip().startswith("✔") or line.strip().startswith("✅"):
+                txt.insert(tk.END, line + "\n", "ok")
+            elif line.strip().startswith("❌"):
+                txt.insert(tk.END, line + "\n", "error")
+            else:
+                txt.insert(tk.END, line + "\n")
+
+        txt.config(state=tk.DISABLED)
+
+    # ── UTILIDADES ───────────────────────────
+    def _clear_tab(self, tab):
+        for widget in tab.winfo_children():
+            widget.destroy()
+
+    def _embed_fig(self, fig, tab):
+        canvas = FigureCanvasTkAgg(fig, master=tab)
+        canvas.draw()
+        toolbar = NavigationToolbar2Tk(canvas, tab, pack_toolbar=False)
+        toolbar.config(background=PANEL_BG)
+        toolbar.update()
+        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
+
+    def _on_close(self):
+        self.destroy()
+        self.quit()
 
 
-combo_model.bind("<<ComboboxSelected>>", lambda e: render_matrix())
-btn_run.configure(command=run_analysis)
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  ARRANCAR
-# ═════════════════════════════════════════════════════════════════════════════
-show_panel("Datos")
-root.mainloop()
+# ─────────────────────────────────────────────
+#  PUNTO DE ENTRADA
+# ─────────────────────────────────────────────
+if __name__ == "__main__":
+    app = AppMineria()
+    app.mainloop()
